@@ -17,7 +17,7 @@ using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, 
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
   printf("%s: ", typeid(TestType).name());
-  printf("AddressBits = %d, total_size_bytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES);
+  printf("AddressBits = %d, TotalSizeBytes = %d, PageSizeBytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
   printf("T_BLC = %d usec, T_WC = %d usec\r\n", TestType::T_BLC_USEC, TestType::T_WC_USEC);
 }
 
@@ -83,6 +83,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
   dut.m_write_enabled = false;
   std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
   dut.device_start();
+  dut.read(0);
 
   auto i = GENERATE(take(17, random((int)0, (int)TestType::TOTAL_SIZE_BYTES-1)));
   uint8_t v = GENERATE(take(3, random(0, 255)));
