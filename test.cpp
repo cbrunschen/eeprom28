@@ -14,6 +14,7 @@
 Clock tc; // the test clock
 
 using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010>;
+using all_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, f28f256>;
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
   printf("%s: ", typeid(TestType).name());
@@ -26,7 +27,7 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
   TestType dut;
   const uint8_t base = 0x3a;
   std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
-  dut.start();
+  dut.device_start();
 
   auto i = GENERATE(take(17, random((int)0, (int)TestType::TOTAL_SIZE_BYTES-1)));
   uint8_t v = GENERATE(take(3, random(0, 255)));
@@ -59,14 +60,14 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
   REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write protection recjects writes", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
   tc.reset(4711L);
 
   const uint8_t base = 0x5e;
   TestType dut;
-  dut.m_write_protected = true;
+  dut.m_write_enabled = false;
   std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
-  dut.start();
+  dut.device_start();
 
   auto i = GENERATE(take(17, random((int)0, (int)TestType::TOTAL_SIZE_BYTES-1)));
   uint8_t v = GENERATE(take(3, random(0, 255)));
@@ -104,10 +105,10 @@ TEMPLATE_LIST_TEST_CASE("Write protection recjects writes", "", types) {
 TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   tc.reset(4711);
   TestType dut;
-  dut.m_write_protected = false;
-  dut.start();
+  dut.m_write_enabled = true; // start with writes enabled / no write protection.
+  dut.device_start();
 
-  REQUIRE(!dut.m_write_protected);
+  REQUIRE(dut.m_write_enabled);
 
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
   REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
@@ -120,6 +121,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
 
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
   REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
 
   tc.advance(TestType::T_BLC_USEC);
@@ -129,16 +131,16 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   tc.advance(TestType::T_WC_USEC);
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
-  REQUIRE(dut.m_write_protected);
+  REQUIRE(!dut.m_write_enabled);
 }
 
 TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   tc.reset(4711);
   TestType dut;
-  dut.m_write_protected = false;
-  dut.start();
+  dut.m_write_enabled = false;  // start with writes disabled / write protection on.
+  dut.device_start();
 
-  REQUIRE(!dut.m_write_protected);
+  REQUIRE(!dut.m_write_enabled);
 
   dut.write((0x5555 & TestType::ADDRESS_MASK), 0xaa);
   REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
@@ -151,6 +153,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write((0x5555 & TestType::ADDRESS_MASK), 0xa0);
 
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
   REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
 
   tc.advance(TestType::T_BLC_USEC / 2);
@@ -179,8 +182,9 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   tc.advance(TestType::T_WC_USEC);
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
-  REQUIRE(dut.m_write_protected);
+  REQUIRE(!dut.m_write_enabled);  // we are still write protected
 
+  // And all the writes have succeeded.
   REQUIRE(dut.m_storage[0x1231] == 0x19);
   REQUIRE(dut.m_storage[0x1234] == 0x20);
   REQUIRE(dut.m_storage[0x1237] == 0x21);
@@ -189,10 +193,10 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
   tc.reset(4711);
   TestType dut;
-  dut.m_write_protected = true;
-  dut.start();
+  dut.m_write_enabled = false;
+  dut.device_start();
 
-  REQUIRE(dut.m_write_protected);
+  REQUIRE(!dut.m_write_enabled);
 
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
@@ -231,7 +235,7 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
   tc.advance(TestType::T_WC_USEC);
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
-  REQUIRE(!dut.m_write_protected);
+  REQUIRE(dut.m_write_enabled);
 }
 
 TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
@@ -245,7 +249,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
   // Filled with the base value, initially.
   std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
 
-  dut.start();
+  dut.device_start();
 
   auto page = GENERATE(take(5, random((int)0, (int)(TestType::TOTAL_SIZE_BYTES / TestType::PAGE_SIZE_BYTES)-1)));
   auto n_bytes = 7 + (rand() % (TestType::PAGE_SIZE_BYTES - 7));
@@ -280,7 +284,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
   // Filled with the base value, initially.
   std::memset(&expected[0], base, TestType::PAGE_SIZE_BYTES);
 
-  dut.start();
+  dut.device_start();
 
   constexpr auto n_pages = TestType::TOTAL_SIZE_BYTES / TestType::PAGE_SIZE_BYTES;
   constexpr auto last_page = n_pages - 1;
@@ -326,4 +330,78 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
       REQUIRE(comparison_result == 0);
     }
   }
+}
+
+TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon read", "") {
+  using TestType = f28f256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = true;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  // write to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  uint8_t actual = dut.read(offset);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately upon read", "") {
+  using TestType = f28f256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = false;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  // Perform the write protection command sequence
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
+
+  // write some data to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  uint8_t actual = dut.read(offset);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }

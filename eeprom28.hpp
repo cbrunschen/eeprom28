@@ -75,13 +75,11 @@ template<
 >
 class eeprom28 {
 public:
-	using Self = eeprom28<AddressBits, PageSizeBytes,	TBLCUsec, TWCUsec, ProgramOnRead>;
-
 	// construction/destruction
 	eeprom28() { }
 	virtual ~eeprom28() {
-		timer_delete(m_start_programming_timer);
-		timer_delete(m_programming_completed_timer);
+		if (m_start_programming_timer) timer_delete(m_start_programming_timer);
+		if (m_programming_completed_timer) timer_delete(m_programming_completed_timer);
 	}
 
 	void write(uint32_t offset, uint8_t data);
@@ -102,7 +100,7 @@ public:
 	static constexpr uint8_t TOGGLE_BIT = 1 << 6;
 
 	// device-level overrides
-	virtual void start();
+	virtual void device_start();
 
 // private:
 
@@ -121,7 +119,7 @@ public:
 	// internal state
 	enum {
 		// idle state: reads work as normal, writes will succeed or fail depending on
-		// m_write_protected - except for those writes that are part of one of the protection
+		// m_write_enabled - except for those writes that are part of one of the protection
 		// enable or disable sequences.
 		STATE_IDLE,  
 	
@@ -169,7 +167,7 @@ public:
 		COMMAND_STATE_PROTECION_DISABLE_5,
 		// after detecting the sixth write in the protection disable command sequence, 
 		// writing 20 to address 5555 (1555 on X28C64),
-		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_protected = false.
+		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = false.
 	};
 
   std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
@@ -180,7 +178,7 @@ public:
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;
 	int m_command_state = COMMAND_STATE_NONE;
-	bool m_write_protected = false;
+	bool m_write_enabled = true;
 	int m_buffering_page = 0;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
 
@@ -195,11 +193,11 @@ class x28hc256 : public eeprom28<15, 64, 100, 3000> {};
 class x28c512 : public eeprom28<16, 128, 100, 5000> {};
 class x28c010 : public eeprom28<17, 128, 100, 5000> {};
 
-// WIP:
-// a 256 kbit == 32 kbyte "fast" that uses no timers, relying on the cliend to
+// a 256 kbit == 32 kbyte "fast" that uses no timers, relying on the client to
 // read() after performing a sequence of writes, at which point the pending writes 
-// are immediately committed and ready.
-class f28c256 : public eeprom28<15, 64, 0, 0, true> {};
+// are immediately committed and ready, and returned without Toggle Bit polling
+// or /DATA polling
+class f28f256 : public eeprom28<15, 64, 0, 0, true> {};
 
 #include "eeprom28.ipp"
 
