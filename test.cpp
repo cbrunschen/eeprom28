@@ -110,12 +110,12 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   REQUIRE(!dut.m_write_protected);
 
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
   tc.advance(TestType::T_BLC_USEC / 2);
 
   dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
@@ -141,12 +141,12 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   REQUIRE(!dut.m_write_protected);
 
   dut.write((0x5555 & TestType::ADDRESS_MASK), 0xaa);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
   tc.advance(TestType::T_BLC_USEC / 2);
 
   dut.write((0x2aaa & TestType::ADDRESS_MASK), 0x55);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write((0x5555 & TestType::ADDRESS_MASK), 0xa0);
@@ -195,32 +195,38 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
   REQUIRE(dut.m_write_protected);
 
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
   tc.advance(TestType::T_BLC_USEC / 2);
 
   dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0x80);
 
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_3);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_3);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
 
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_4);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_4);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
 
-  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_5);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_5);
 
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0x20);
 
   REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
 
   tc.advance(TestType::T_WC_USEC);
 

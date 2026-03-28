@@ -49,6 +49,17 @@ struct Timer {
   }
 };
 
+Timer *timer_alloc(std::function<void(void)> callback) {
+  return new Timer(tc, callback);
+}
+
+void timer_delete(Timer *t) {
+  if (t) {
+    t->enable(false);
+    delete t;
+  }
+}
+
 inline bool Clock::has_events() { return !timers.empty(); }
 inline long int Clock::next_event() { 
   auto i = std::min_element(timers.begin(), timers.end(), 
@@ -74,11 +85,14 @@ inline void Clock::advance(long int usec) {
 }
 
 inline void Clock::reset(long int now) {
-  this->now = now;
-}
+  // remove any previously added timers.
+  while (!timers.empty()) {
+    Timer *t = *timers.begin();
+    timers.pop_front();
+    timer_delete(t);
+  }
 
-Timer *timer_alloc(std::function<void(void)> callback) {
-  return new Timer(tc, callback);
+  this->now = now;
 }
 
 #endif // ENV_HPP

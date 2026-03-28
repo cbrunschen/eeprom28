@@ -20,6 +20,23 @@ template<
 	uint32_t TWCUsec,
 	bool ProgramOnRead
 >
+void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::start() {
+  if (TBLCUsec > 0) {
+    m_start_programming_timer = timer_alloc(std::bind(&eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::start_programming_cycle, this));
+  }
+
+  if (TWCUsec > 0) {
+    m_programming_completed_timer = timer_alloc(std::bind(&eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::programming_cycle_complete, this));
+  }
+}
+
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead
+>
 inline void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::change_to_state(int ns) {
   // printf("Changing state to %d\r\n", ns);
   m_state = ns;
@@ -43,16 +60,30 @@ template<
 	uint32_t TWCUsec,
 	bool ProgramOnRead
 >
+inline void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::change_to_command_state(int ns) {
+  // printf("Changing state to %d\r\n", ns);
+  m_command_state = ns;
+}
+
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead
+>
+void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::command_state_machine_error() {
+  change_to_command_state(COMMAND_STATE_NONE);
+}
+
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead
+>
 void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::write(uint32_t offset, uint8_t data) {
-  // Note whether we are starting from the idle state.
-  bool was_idle = m_state == STATE_IDLE;
-
-  // printf("write(%04x, %02x) in state %d\n", offset, data, m_state);
-  if (offset >= TOTAL_SIZE_BYTES) {
-    // Attempting to write outside the range of this device does nothing.
-    return;
-  }
-
   if (m_state == STATE_PROGRAMMING) {
     // An attempt to write during a programming cycle does nothing.
     printf("IN PROGRAMMING CYCLE: writing %02x @ %04x\n", data, offset);
@@ -62,6 +93,87 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
   if (TBLCUsec > 0) {
     // Adjust the time remaining for more writes to the same page.
     m_start_programming_timer->adjust(attotime::from_usec(TBLCUsec));
+  }
+
+  // printf("write(%04x, %02x) in state %d\n", offset, data, m_state);
+  if (offset >= TOTAL_SIZE_BYTES) {
+    // Attempting to write outside the range of this device does nothing.
+    return;
+  }
+
+  // Command sequence processing:
+  if (m_state == STATE_IDLE) {
+    // Detect if this is the initiation of a command sequence, but only if the current state is IDLE
+    if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xaa)){ 
+      change_to_command_state(COMMAND_STATE_1);
+    }
+  } else if (m_state == STATE_BUFFERING) {
+    // Detect if this is the second write in a command sequence
+    if (m_command_state == COMMAND_STATE_1) {
+      if ((offset == (0x2aaa & ADDRESS_MASK)) && (data == 0x55)) {
+        // We're firmly within a protection command sequence. 
+        // Inhibit the actual writing of data during the subsequence programming cycle.
+        m_program_buffer_to_eeprom = false;
+        // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
+        change_to_command_state(COMMAND_STATE_2);
+      } else {
+        // Not, after all in a command sequence.
+        change_to_command_state(COMMAND_STATE_NONE);
+      }
+    } else if (m_command_state == COMMAND_STATE_2) {
+      if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xa0)) {
+        // We've received a complete "enable write protection" command, so we:
+        // Enable write protection;
+        m_write_protected = true;
+        // note that we are no longer in a command sequence;
+        change_to_command_state(COMMAND_STATE_NONE);
+        // but also enter the overall "protected write" state to potentially accept some writes.
+        change_to_state(STATE_PROTECTED_WRITE);
+        // Note that this was the last written offset
+        m_last_written_offset = offset;
+        // and that concludes what we do in this write cycle.
+        return;
+      } else if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0x80) && (m_write_protected)) {
+        change_to_command_state(COMMAND_STATE_PROTECION_DISABLE_3);
+      } else  {
+        command_state_machine_error();
+      }
+    } else if (m_command_state == COMMAND_STATE_PROTECION_DISABLE_3) {
+      if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xaa)) {
+        change_to_command_state(COMMAND_STATE_PROTECION_DISABLE_4);
+      } else {
+        command_state_machine_error();
+      }
+    } else if (m_command_state == COMMAND_STATE_PROTECION_DISABLE_4) {
+      if ((offset == (0x2aaa & ADDRESS_MASK)) && (data == 0x55)) {
+        change_to_command_state(COMMAND_STATE_PROTECION_DISABLE_5);
+      } else {
+        command_state_machine_error();
+      }
+    } else if (m_command_state == COMMAND_STATE_PROTECION_DISABLE_5) {
+      if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0x20)) {
+        // We have now received a complete "disable write protection" command. So we:
+        // disable write protection.
+        m_write_protected = false;
+        // Note that we're no longer in a command sequence.
+        change_to_command_state(COMMAND_STATE_NONE);
+        // Write protection was disabled, and the preceding writes were just part of that command sequence.
+        m_program_buffer_to_eeprom = false;
+        // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
+
+        if (TBLCUsec > 0) {
+          // Since we're explicitly starting the programming cycle, disable the timer
+          m_start_programming_timer->enable(false);
+        }
+        
+        // and start the programming cycle
+        start_programming_cycle();
+        // and now we're done with this write.
+        return;
+      } else {
+        command_state_machine_error();
+      }
+    } 
   }
 
   if (m_state == STATE_IDLE || m_state == STATE_PROTECTED_WRITE) {
@@ -87,7 +199,10 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
     std::copy(p, p + PageSizeBytes, std::begin(m_page_buffer));
   }
 
-  if (m_state == STATE_BUFFERING || m_state == STATE_PROTECTION_1) {
+  // Deliberately falling through after detecting the first write and changing state
+  // from (IDLE or PROTECTED_WRITE) to BUFFERING
+
+  if (m_state == STATE_BUFFERING) {
     // The datasheet for the X28C256 says that 
     //   "the page address (A6 through A14) for each subsequent
     //   valid write cycle to the part during this operation must be
@@ -107,63 +222,6 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
     m_last_written_offset = offset;
   }
 
-  // Detect if this is the initiation of a protection {en|dis}able sequence
-  if ((was_idle) && (offset == (0x5555 & ADDRESS_MASK)) && (data == 0xaa)){ 
-    return change_to_state(STATE_PROTECTION_1);
-  }
-
-  // Detect if this is the second write in a protection {en|dis}able sequence
-  if (m_state == STATE_PROTECTION_1) {
-    if ((offset == (0x2aaa & ADDRESS_MASK)) && (data == 0x55)) {
-      // We're firmly within a protection command sequence. 
-      // Inhibit the actual writing of data during the subsequence programming cycle.
-      m_program_buffer_to_eeprom = false;
-      // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
-      return change_to_state(STATE_PROTECTION_2);
-    } else {
-      return state_machine_error();
-    }
-  }
-
-  if (m_state == STATE_PROTECTION_2) {
-    if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xa0)) {
-      m_write_protected = true;
-      return change_to_state(STATE_PROTECTED_WRITE);
-    } else if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0x80) && (m_write_protected)) {
-      return change_to_state(STATE_PROTECTION_DISABLE_3);
-    } else  {
-      return state_machine_error();
-    }
-  }
-
-  if (m_state == STATE_PROTECTION_DISABLE_3) {
-    if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xaa)) {
-      return change_to_state(STATE_PROTECTION_DISABLE_4);
-    } else {
-      return state_machine_error();
-    }
-  }
-
-  if ((m_state == STATE_PROTECTION_DISABLE_4) && (offset == (0x2aaa & ADDRESS_MASK)) && (data == 0x55)) {
-    return change_to_state(STATE_PROTECTION_DISABLE_5);
-  }
-
-  if ((m_state == STATE_PROTECTION_DISABLE_5) && (offset == (0x5555 & ADDRESS_MASK)) && (data == 0x20)) {
-    // disable write protection.
-    m_write_protected = false;
-    // Write protection was disabled, and the preceding writes were just part of that command sequence.
-    m_program_buffer_to_eeprom = false;
-    // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
-
-    if (TBLCUsec > 0) {
-      // Explicitly start the programming cycle: disable the timer
-      m_start_programming_timer->enable(false);
-    }
-    
-    // and start the programming cycle
-    return start_programming_cycle();
-  } 
-
   // if (m_write_protected) {
   //   printf("X28C: write %02x to %x while write protected\n", data, offset);
   // }
@@ -179,12 +237,11 @@ template<
 uint8_t eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::read(uint32_t offset) {
   uint8_t data = m_storage[offset];
 
-  if (m_state == STATE_PROTECTION_1) {
-    // Per the X28C256 datasheet regarding the protection {en|dis}able sequence,
+  if (m_command_state != COMMAND_STATE_NONE) {
+    // Per the X28C256 datasheet regarding the command sequence,
     //   "Note: Once initiated, the sequence of write operations
     //   should not be interrupted."
-    // A read operation would seem to interrupt that sequence, and thus return us to the normal
-    // 'buffering' state.
+    // A read operation would seem to interrupt that sequence, and thus end that sequence.
     change_to_state(STATE_BUFFERING);
   }
 
@@ -231,10 +288,6 @@ template<
 >
 void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::start_programming_cycle() {
   change_to_state(STATE_PROGRAMMING);
-
-  if (TWCUsec > 0) {
-    m_programming_completed_timer->adjust(attotime::from_usec(TWCUsec));
-  }
   
   if (m_program_buffer_to_eeprom) {
     std::copy(std::begin(m_page_buffer), std::end(m_page_buffer), &(m_storage[m_buffering_page]));
@@ -242,6 +295,8 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::sta
 
   if (TWCUsec == 0) {
     programming_cycle_complete();
+  } else if (TWCUsec > 0) {
+    m_programming_completed_timer->adjust(attotime::from_usec(TWCUsec));
   }
 }
 

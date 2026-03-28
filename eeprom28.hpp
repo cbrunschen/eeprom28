@@ -75,8 +75,14 @@ template<
 >
 class eeprom28 {
 public:
+	using Self = eeprom28<AddressBits, PageSizeBytes,	TBLCUsec, TWCUsec, ProgramOnRead>;
+
 	// construction/destruction
 	eeprom28() { }
+	virtual ~eeprom28() {
+		timer_delete(m_start_programming_timer);
+		timer_delete(m_programming_completed_timer);
+	}
 
 	void write(uint32_t offset, uint8_t data);
 	uint8_t read(uint32_t offset);
@@ -96,15 +102,7 @@ public:
 	static constexpr uint8_t TOGGLE_BIT = 1 << 6;
 
 	// device-level overrides
-	virtual void start() {
-		if (TBLCUsec > 0) {
-			m_start_programming_timer = timer_alloc(std::bind(&eeprom28::start_programming_cycle, this));
-		}
-
-		if (TWCUsec > 0) {
-			m_programming_completed_timer = timer_alloc(std::bind(&eeprom28::programming_cycle_complete, this));
-		}
-	}
+	virtual void start();
 
 // private:
 
@@ -114,34 +112,18 @@ public:
 	// Error in the internal state machine, return to the correct idle internal state
 	void state_machine_error();
 
+	// Change State to a new command processing state
+	void change_to_command_state(int ns);
+
+	// Error in the command state machine, return to the correct idle internal state
+	void command_state_machine_error();
+
 	// internal state
 	enum {
 		// idle state: reads work as normal, writes will succeed or fail depending on
 		// m_write_protected - except for those writes that are part of one of the protection
 		// enable or disable sequences.
 		STATE_IDLE,  
-
-		// after detecting the first write that initiates a protection en-/disable sequence,
-		// writing AA to address 5555 (1555 on X28C64)
-		STATE_PROTECTION_1,
-		// after detecting the second write  that initiates a protection en-/disable sequence,
-		// writing 55 to address 2AAA (0AAA on X28C64)
-		STATE_PROTECTION_2,
-
-
-		// after detecting the third write that initiates a protection disable sequence,
-		// writing 80 to address 5555 (1555 on X28C64)
-		STATE_PROTECTION_DISABLE_3,
-		// after detecting the fourth write that initiates a protection disable sequence,
-		// writing AA to address 5555 (1555 on X28C64)
-		STATE_PROTECTION_DISABLE_4,
-		// after detecting the fifth write that initiates a protection disable sequence.
-		// writing 55 to address 2AAA (0AAA on X28C64)
-		STATE_PROTECTION_DISABLE_5,
-		// after detecting the sixth write in the sequence, 
-		// writing 20 to address 5555 (1555 on X28C64),
-		// the device will return to STATE_IDLE with m_write_protected = false.
-
 	
 		// After detecting the third write that initiates a protection enable sequence,
 		// writing A0 to address 5555 (1555 on X28C64).
@@ -162,6 +144,34 @@ public:
 		STATE_PROGRAMMING,
 	};
 
+	// Command processing state
+	enum {
+		// Not in any command sequence.
+		COMMAND_STATE_NONE = 0,
+
+		// after detecting the first write that initiates a command sequence,
+		// writing AA to address 5555 (1555 on X28C64)
+		COMMAND_STATE_1,
+		// after detecting the second write  that initiates a command sequence,
+		// writing 55 to address 2AAA (0AAA on X28C64)
+		COMMAND_STATE_2,
+		// If in this state the client writes 
+
+
+		// after detecting the third write that initiates a protection disable command sequence,
+		// writing 80 to address 5555 (1555 on X28C64)
+		COMMAND_STATE_PROTECION_DISABLE_3,
+		// after detecting the fourth write that initiates a protection disable command sequence,
+		// writing AA to address 5555 (1555 on X28C64)
+		COMMAND_STATE_PROTECION_DISABLE_4,
+		// after detecting the fifth write that initiates a protection disable command sequence.
+		// writing 55 to address 2AAA (0AAA on X28C64)
+		COMMAND_STATE_PROTECION_DISABLE_5,
+		// after detecting the sixth write in the protection disable command sequence, 
+		// writing 20 to address 5555 (1555 on X28C64),
+		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_protected = false.
+	};
+
   std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
   bool m_program_buffer_to_eeprom;
 	Timer *m_start_programming_timer;
@@ -169,6 +179,7 @@ public:
 	uint32_t m_last_written_offset;
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;
+	int m_command_state = COMMAND_STATE_NONE;
 	bool m_write_protected = false;
 	int m_buffering_page = 0;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
