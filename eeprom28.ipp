@@ -248,8 +248,9 @@ uint8_t eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::
   }
 
   if (PROGRAM_ON_READ) {
-    if (m_state == STATE_BUFFERING) {
-      // We have some buffered data, immediately write it to storage;
+    if (m_state == STATE_BUFFERING || m_state == STATE_PROTECTED_WRITE) {
+      // We have some buffered data or a change to enable write protection;
+      // immediately write any buffered data to storage:
       // First, cancel any existing programming cycle timer
       if (TBLCUsec > 0) {
         m_start_programming_timer->enable(false);
@@ -313,6 +314,7 @@ template<
 >
 void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::programming_cycle_complete() {
   change_to_state(STATE_IDLE);
+
   m_program_buffer_to_eeprom = false;
   // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
 }

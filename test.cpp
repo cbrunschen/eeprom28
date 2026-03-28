@@ -2,27 +2,26 @@
 #include <catch2/catch_template_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
 
+#define EEPROM28_VISIBLE_FOR_TESTING 1
 #include "eeprom28.hpp"
+#undef EEPROM28_VISIBLE_FOR_TESTING
 
 #include "env.hpp"
 
 #include <tuple>
 #include <cstring>
 
-#define quote(x) #x
-
 Clock tc; // the test clock
 
-using timed_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040>;
-using all_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, f28f256>;
+using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, f28f256>;
 
-TEMPLATE_LIST_TEST_CASE("Show Device Info", "", all_types) {
+TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
   printf("%s: ", typeid(TestType).name());
   printf("AddressBits = %d, total_size_bytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES);
   printf("T_BLC = %d usec, T_WC = %d usec\r\n", TestType::T_BLC_USEC, TestType::T_WC_USEC);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", all_types) {
+TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
   tc.reset(4711L);
   TestType dut;
   const uint8_t base = 0x3a;
@@ -76,7 +75,7 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", all_types) {
   REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", all_types) {
+TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
   tc.reset(4711L);
 
   const uint8_t base = 0x5e;
@@ -122,7 +121,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", all_types) {
   REQUIRE(dut.read(i) == base);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", timed_types) {
+TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = true; // start with writes enabled / no write protection.
@@ -144,17 +143,23 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", timed_types) {
   REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
   REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
 
-  tc.advance(TestType::T_BLC_USEC);
+  if (TestType::T_BLC_USEC > 0) {
+    tc.advance(TestType::T_BLC_USEC);
+  } else {
+    // we must trigger programming through read(), somewhere.
+    dut.read(0);
+  }
 
-  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
-
-  tc.advance(TestType::T_WC_USEC);
+  if (TestType::T_WC_USEC > 0) {
+    REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+    tc.advance(TestType::T_WC_USEC);
+  }
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
   REQUIRE(!dut.m_write_enabled);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", timed_types) {
+TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = false;  // start with writes disabled / write protection on.
@@ -195,11 +200,16 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", timed_ty
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
   REQUIRE(dut.m_program_buffer_to_eeprom);
 
-  tc.advance(TestType::T_BLC_USEC);
+  if (TestType::T_BLC_USEC > 0) {
+    tc.advance(TestType::T_BLC_USEC);
+  } else {
+    dut.read(0);
+  }
 
-  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
-
-  tc.advance(TestType::T_WC_USEC);
+  if (TestType::T_WC_USEC > 0) {
+    REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+    tc.advance(TestType::T_WC_USEC);
+  }
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
   REQUIRE(!dut.m_write_enabled);  // we are still write protected
@@ -210,7 +220,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", timed_ty
   REQUIRE(dut.m_storage[0x1237] == 0x21);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", timed_types) {
+TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = false;
@@ -249,16 +259,18 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", timed_types) {
   tc.advance(TestType::T_BLC_USEC / 2);
   dut.write(0x5555 & TestType::ADDRESS_MASK, 0x20);
 
-  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
   REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
 
-  tc.advance(TestType::T_WC_USEC);
+  if (TestType::T_WC_USEC > 0) {
+    REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+    tc.advance(TestType::T_WC_USEC);
+  }
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
   REQUIRE(dut.m_write_enabled);
 }
 
-TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", timed_types) {
+TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
   tc.reset(4711);
   TestType dut;
   const uint8_t base = 0xbd;
@@ -286,14 +298,19 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", timed_types
     expected[address] = v;
   }
 
-  // allow the programming cycle to happen
-  tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+  if (TestType::T_BLC_USEC > 0) {
+    // allow the programming cycle to happen
+    tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+  } else {
+    // trigger the programming cycle
+    dut.read(0);
+  }
 
   // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
   REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
-TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", timed_types) {
+TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", types) {
   tc.reset(4711);
   TestType dut;
   const uint8_t base = 0xbd;
@@ -337,8 +354,13 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
     REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
   }
 
-  // allow the programming cycle to happen
-  tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+  if (TestType::T_BLC_USEC > 0) {
+    // allow the programming cycle to happen
+    tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+  } else {
+    // trigger the programming cycle
+    dut.read(0);
+  }
 
   // Check no pages other than the first page touched, have changed 
   // - and that the first-touched page _has_ changed.

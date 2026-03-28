@@ -8,27 +8,28 @@
 #include <list>
 
 struct attotime {
-  static long int from_usec(int usec) { return usec; }
-  static long int from_msec(int msec) { return msec * 1000; }
+  static uint64_t from_usec(int usec) { return usec; }
+  static uint64_t from_msec(int msec) { return msec * 1000; }
+  const static uint64_t never = (1UL << 63); // _lots_ ot microseconds.
 };
 
 struct Timer;
 
 struct Clock {
-  long int now = 0;
+  uint64_t now = 0;
   std::list<Timer *>timers;
 
-  void advance(long int usec);
-  void reset(long int now);
+  void advance(uint64_t usec);
+  void reset(uint64_t now);
   bool has_events();
-  long int next_event();
+  uint64_t next_event();
 };
 
 extern Clock tc;
 
 struct Timer {
   Clock &clock;
-  long int scheduled_at;
+  uint64_t scheduled_at;
   std::function<void(void)> callback;
 
   Timer(Clock &clock, std::function<void(void)> callback) 
@@ -37,8 +38,8 @@ struct Timer {
   , callback(callback) {
   } 
 
-  void adjust(long int usec) {
-    scheduled_at = clock.now + usec;
+  void adjust(uint64_t usec) {
+    scheduled_at = usec == attotime::never ? attotime::never : clock.now + usec;
     enable(true);
   }
 
@@ -61,13 +62,13 @@ void timer_delete(Timer *t) {
 }
 
 inline bool Clock::has_events() { return !timers.empty(); }
-inline long int Clock::next_event() { 
+inline uint64_t Clock::next_event() { 
   auto i = std::min_element(timers.begin(), timers.end(), 
       [](const Timer *a, const Timer *b) { return a->scheduled_at < b->scheduled_at; });
   return (*i)->scheduled_at;
 }
 
-inline void Clock::advance(long int usec) {
+inline void Clock::advance(uint64_t usec) {
   long int target = now + usec;
   long int next;
 
@@ -84,7 +85,7 @@ inline void Clock::advance(long int usec) {
   now = target;
 }
 
-inline void Clock::reset(long int now) {
+inline void Clock::reset(uint64_t now) {
   // remove any previously added timers.
   while (!timers.empty()) {
     Timer *t = *timers.begin();

@@ -1,8 +1,10 @@
 /***************************************************************************
 
-    28-series Parallel EEPROM sich as Xicor X28, Atmel AT28, etc.
-		Caters for different speeds such as X28C256, X28HC256, etc.
-		Caters for different storage sizes such as X28C64, X28C256, etc.
+	28-series Parallel EEPROM read and write logic, including write protection
+	command sequences, such as Xicor X28, Atmel AT28, etc.
+	Caters for different speeds such as X28C256, X28HC256, etc.
+	Caters for different storage sizes such as X28C64, X28C256, X28C010,
+	XM28C020, etc.
 
 ***************************************************************************/
 
@@ -22,7 +24,7 @@
 //  TYPE DEFINITIONS
 //**************************************************************************
 
-// eeprom28: 28-series EEPROM with pages write and software write protection
+// eeprom28: 28-series EEPROM with paged write and software write protection
 
 /**
  * Template parameters
@@ -44,6 +46,10 @@
  *   those writes will be combined in a single programming cycle. Or in other words,
  *   the programming cycle starts T_BLC after the most recent write.
  *   Xicor X28C256 has T_BLC = 100 mucroseconds; AT28C256 has T_BLC = 150 microseconds.
+ *   If TBlcUsec == 0, then there is no timed end to the Byte Load Cycle, so we
+ *   _must_ trigger programming in some other way. The only way to do that is to triggger
+ *   programming on read(), so that is what we do. See also ProgramOnRead below, for
+ *   explicitly enabling this behaviour.
  * 
  * TWCUsec:
  *   The EEPROM's T_WC, the "Write Cycle Time", in microseconds. This is the amount
@@ -56,7 +62,7 @@
  *   immediately start any pending programming cycle. 
  *   This is not present on real devices but here it allows us to create a 'fast' eeprom.
  *   In particular, if we know that the client always follows writes with reads to verify
- *   that the programming cycle completes, then we can set TBLCUsec to 0 and 
+ *   that the programming cycle completes, then we can set TBLCUsec to 0 and thus implicitly
  *   ProgramOnRead to true. We now have a device that obeys the EEPROM write
  *   protection commands but does not have to wait for T_BLC to expire before writing the
  *   buffered data to storage.
@@ -85,7 +91,10 @@ public:
 	void write(uint32_t offset, uint8_t data);
 	uint8_t read(uint32_t offset);
 
-// protected:
+#ifndef EEPROM28_VISIBLE_FOR_TESTING
+protected:
+#endif // EEPROM28_VISIBLE_FOR_TESTING
+
 	static constexpr uint32_t ADDRESS_BITS = AddressBits;
 	static constexpr uint32_t TOTAL_SIZE_BYTES = 1 << AddressBits;
 	static constexpr uint32_t ADDRESS_MASK = TOTAL_SIZE_BYTES - 1;
@@ -103,7 +112,9 @@ public:
 	// device-level overrides
 	virtual void device_start();
 
-// private:
+#ifndef EEPROM28_VISIBLE_FOR_TESTING
+private:
+#endif // EEPROM28_VISIBLE_FOR_TESTING
 
 	// Change State to a new internal state
 	void change_to_state(int ns);
@@ -200,7 +211,7 @@ class xm28c040 : public eeprom28<19, 256, 100, 5000> {}; // 4 x28c010:s in a sin
 // read() after performing a sequence of writes, at which point the pending writes 
 // are immediately committed and ready, and returned without Toggle Bit polling
 // or /DATA polling
-class f28f256 : public eeprom28<15, 64, 0, 0, true> {};
+class f28f256 : public eeprom28<15, 64, 0, 0> {};
 
 #include "eeprom28.ipp"
 
