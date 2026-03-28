@@ -247,7 +247,7 @@ uint8_t eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::
     change_to_state(STATE_BUFFERING);
   }
 
-  if (ProgramOnRead) {
+  if (PROGRAM_ON_READ) {
     if (m_state == STATE_BUFFERING) {
       // We have some buffered data, immediately write it to storage;
       // First, cancel any existing programming cycle timer

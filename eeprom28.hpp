@@ -92,6 +92,7 @@ public:
 	static constexpr uint32_t PAGE_SIZE_BYTES = PageSizeBytes;
 	static constexpr uint32_t T_BLC_USEC = TBLCUsec;
 	static constexpr uint32_t T_WC_USEC = TWCUsec;
+	static constexpr bool PROGRAM_ON_READ = (TBLCUsec == 0) || ProgramOnRead;
 
 	static constexpr uint32_t PAGE_OFFSET_MASK = PageSizeBytes - 1;
 	static constexpr uint32_t PAGE_MASK = ~(PAGE_OFFSET_MASK);
@@ -191,7 +192,9 @@ class x28c64 : public eeprom28<13, 64, 100, 5000> {};
 class x28c256 : public eeprom28<15, 64, 100, 5000> {};
 class x28hc256 : public eeprom28<15, 64, 100, 3000> {};
 class x28c512 : public eeprom28<16, 128, 100, 5000> {};
-class x28c010 : public eeprom28<17, 128, 100, 5000> {};
+class x28c010 : public eeprom28<17, 256, 100, 5000> {};
+class xm28c020 : public eeprom28<18, 128, 100, 5000> {}; // 4 x28c513:s i na single package
+class xm28c040 : public eeprom28<19, 256, 100, 5000> {}; // 4 x28c010:s in a single package
 
 // a 256 kbit == 32 kbyte "fast" that uses no timers, relying on the client to
 // read() after performing a sequence of writes, at which point the pending writes 

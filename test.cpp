@@ -13,16 +13,16 @@
 
 Clock tc; // the test clock
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010>;
-using all_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, f28f256>;
+using timed_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040>;
+using all_types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, f28f256>;
 
-TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
+TEMPLATE_LIST_TEST_CASE("Show Device Info", "", all_types) {
   printf("%s: ", typeid(TestType).name());
   printf("AddressBits = %d, total_size_bytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES);
   printf("T_BLC = %d usec, T_WC = %d usec\r\n", TestType::T_BLC_USEC, TestType::T_WC_USEC);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", all_types) {
   tc.reset(4711L);
   TestType dut;
   const uint8_t base = 0x3a;
@@ -35,17 +35,33 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
   dut.write(i, v);
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-  tc.advance(TestType::T_BLC_USEC / 10);
+  auto t_into_blc = TestType::T_BLC_USEC / 2;
+  auto t_blc_remaining = TestType::T_BLC_USEC - t_into_blc;
+
+  tc.advance(t_into_blc);
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-  tc.advance(TestType::T_BLC_USEC);
-  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  // Advance to the programming cycle
+  if (TestType::T_BLC_USEC > 0) {
+    // advance into the middle of the programming cycle.
+    tc.advance(t_blc_remaining + TestType::T_WC_USEC / 2);
+  } else {
+    // when T_BLC_USEC == 0, we must trigger the programming cycle by reading
+    dut.read(i);
+  }
 
-  REQUIRE(dut.read(i) != v);
-  REQUIRE(dut.read(i) != v);
-  REQUIRE(dut.read(i) != v);
+  // If we have a non-zero duration programming cycle, check that for 
+  if (TestType::T_WC_USEC > 0) {
+    REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
 
-  tc.advance(TestType::T_WC_USEC);
+    REQUIRE(dut.read(i) != v);
+    REQUIRE(dut.read(i) != v);
+    REQUIRE(dut.read(i) != v);
+
+    // advance past the end of the programming cycle
+    tc.advance(TestType::T_WC_USEC);
+    REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  }
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
   REQUIRE(dut.read(i) == v);
 
@@ -60,7 +76,7 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
   REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", all_types) {
   tc.reset(4711L);
 
   const uint8_t base = 0x5e;
@@ -80,29 +96,33 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
   tc.advance(TestType::T_BLC_USEC / 10);
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-  tc.advance(TestType::T_BLC_USEC);
-  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  if (TestType::T_BLC_USEC > 0) {
+    tc.advance(TestType::T_BLC_USEC);
+    REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  }
 
   uint8_t next = dut.read(i); 
   REQUIRE((next & 0x3f) == (base & 0x3f));
 
-  uint8_t last = next;
-  next = dut.read(i);
-  REQUIRE(next != last);
-  REQUIRE((next & 0x3f) == (base & 0x3f));
+  if (TestType::T_WC_USEC > 0) {
+    uint8_t last = next;
+    next = dut.read(i);
+    REQUIRE(next != last);
+    REQUIRE((next & 0x3f) == (base & 0x3f));
 
-  last = next;
-  next = dut.read(i);
-  REQUIRE(next != last);
-  REQUIRE((next & 0x3f) == (base & 0x3f));
+    last = next;
+    next = dut.read(i);
+    REQUIRE(next != last);
+    REQUIRE((next & 0x3f) == (base & 0x3f));
 
-  tc.advance(TestType::T_WC_USEC);
+    tc.advance(TestType::T_WC_USEC);
+  }
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
 
   REQUIRE(dut.read(i) == base);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", timed_types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = true; // start with writes enabled / no write protection.
@@ -134,7 +154,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
   REQUIRE(!dut.m_write_enabled);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", timed_types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = false;  // start with writes disabled / write protection on.
@@ -190,7 +210,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
   REQUIRE(dut.m_storage[0x1237] == 0x21);
 }
 
-TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
+TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", timed_types) {
   tc.reset(4711);
   TestType dut;
   dut.m_write_enabled = false;
@@ -238,7 +258,7 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
   REQUIRE(dut.m_write_enabled);
 }
 
-TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
+TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", timed_types) {
   tc.reset(4711);
   TestType dut;
   const uint8_t base = 0xbd;
@@ -273,7 +293,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
   REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
-TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", types) {
+TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", timed_types) {
   tc.reset(4711);
   TestType dut;
   const uint8_t base = 0xbd;
