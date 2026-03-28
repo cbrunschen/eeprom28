@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10.0)
-set(CXX_STANDARD 14)
+set(CXX_STANDARD 20)
 
 project(X28C VERSION 0.1.0 LANGUAGES C CXX)
 

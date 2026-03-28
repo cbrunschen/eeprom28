@@ -1,11 +1,13 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_template_test_macros.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
 
 #include "eeprom28.hpp"
 
 #include "env.hpp"
 
 #include <tuple>
+#include <cstring>
 
 #define quote(x) #x
 
@@ -13,81 +15,309 @@ Clock tc; // the test clock
 
 using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010>;
 
-TEMPLATE_LIST_TEST_CASE("Simple write steps", "", types) {
-  tc.reset(4711L);
-
+TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
   printf("%s: ", typeid(TestType).name());
-  printf("AddressBits = %d, total_size_bytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_BYTES);
+  printf("AddressBits = %d, total_size_bytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES);
   printf("T_BLC = %d usec, T_WC = %d usec\r\n", TestType::T_BLC_USEC, TestType::T_WC_USEC);
+}
 
+TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
+  tc.reset(4711L);
   TestType dut;
+  const uint8_t base = 0x3a;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
   dut.start();
 
-  uint8_t values[] = { 17, 0, 255, 199 };  
+  auto i = GENERATE(take(17, random((int)0, (int)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t v = GENERATE(take(3, random(0, 255)));
 
-  for (int i = 0; i < TestType::TOTAL_BYTES; i+= 17) {
-    for (const auto &v : values) {
-      dut.write(i, v);
-      REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  dut.write(i, v);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-      tc.advance(TestType::T_BLC_USEC / 10);
-      REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  tc.advance(TestType::T_BLC_USEC / 10);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-      tc.advance(TestType::T_BLC_USEC);
-      REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  tc.advance(TestType::T_BLC_USEC);
+  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
 
-      REQUIRE(dut.read(i) != v);
-      REQUIRE(dut.read(i) != v);
-      REQUIRE(dut.read(i) != v);
+  REQUIRE(dut.read(i) != v);
+  REQUIRE(dut.read(i) != v);
+  REQUIRE(dut.read(i) != v);
 
-      tc.advance(TestType::T_WC_USEC);
-      REQUIRE(dut.m_state == TestType::STATE_IDLE);
-      REQUIRE(dut.read(i) == v);
-    }
-  }
+  tc.advance(TestType::T_WC_USEC);
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(dut.read(i) == v);
+
+  // Build our expected view of what's in the EEPROM:
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  // Filled with the base value
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+  // ... except where we just wrote.
+  expected[i] = v;
+
+  // Check that the contents match: i.e., only the written-to address has changed.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
 }
 
 TEMPLATE_LIST_TEST_CASE("Write protection recjects writes", "", types) {
   tc.reset(4711L);
 
+  const uint8_t base = 0x5e;
   TestType dut;
   dut.m_write_protected = true;
-  for (int i = 0; i < TestType::TOTAL_BYTES; i++) {
-    dut.m_storage[i] = (i & 0xff);
-  }
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
   dut.start();
 
-  uint8_t values[] = { 17, 0, 255, 199 };  
+  auto i = GENERATE(take(17, random((int)0, (int)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t v = GENERATE(take(3, random(0, 255)));
 
-  for (int i = 0; i < TestType::TOTAL_BYTES; i+= 23) {
-    for (const auto &v : values) {
-      uint8_t w = (i & 0xff);
-      REQUIRE(dut.read(i) == w);
+  REQUIRE(dut.read(i) == base);
 
-      dut.write(i, v);
-      REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  dut.write(i, v);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-      tc.advance(TestType::T_BLC_USEC / 10);
-      REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  tc.advance(TestType::T_BLC_USEC / 10);
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-      tc.advance(TestType::T_BLC_USEC);
-      REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+  tc.advance(TestType::T_BLC_USEC);
+  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
 
-      uint8_t last = dut.read(i); 
-      REQUIRE(last != w);
-      uint8_t next = dut.read(i);
-      REQUIRE(next != last);
-      REQUIRE(next != w);
+  uint8_t next = dut.read(i); 
+  REQUIRE((next & 0x3f) == (base & 0x3f));
 
-      last = next;
-      next = dut.read(i);
-      REQUIRE(next != last);
-      REQUIRE(next != w);
+  uint8_t last = next;
+  next = dut.read(i);
+  REQUIRE(next != last);
+  REQUIRE((next & 0x3f) == (base & 0x3f));
 
-      tc.advance(TestType::T_WC_USEC);
-      REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  last = next;
+  next = dut.read(i);
+  REQUIRE(next != last);
+  REQUIRE((next & 0x3f) == (base & 0x3f));
 
-      REQUIRE(dut.read(i) == w);
+  tc.advance(TestType::T_WC_USEC);
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  REQUIRE(dut.read(i) == base);
+}
+
+TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
+  tc.reset(4711);
+  TestType dut;
+  dut.m_write_protected = false;
+  dut.start();
+
+  REQUIRE(!dut.m_write_protected);
+
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
+
+  tc.advance(TestType::T_BLC_USEC);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+
+  tc.advance(TestType::T_WC_USEC);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(dut.m_write_protected);
+}
+
+TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
+  tc.reset(4711);
+  TestType dut;
+  dut.m_write_protected = false;
+  dut.start();
+
+  REQUIRE(!dut.m_write_protected);
+
+  dut.write((0x5555 & TestType::ADDRESS_MASK), 0xaa);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+
+  dut.write((0x2aaa & TestType::ADDRESS_MASK), 0x55);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write((0x5555 & TestType::ADDRESS_MASK), 0xa0);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x1231, 0x19);
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_buffering_page == (0x1230 & TestType::PAGE_MASK));
+  REQUIRE(dut.m_program_buffer_to_eeprom);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x1234, 0x20);
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_program_buffer_to_eeprom);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x1237, 0x21);
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  REQUIRE(dut.m_program_buffer_to_eeprom);
+
+  tc.advance(TestType::T_BLC_USEC);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+
+  tc.advance(TestType::T_WC_USEC);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(dut.m_write_protected);
+
+  REQUIRE(dut.m_storage[0x1231] == 0x19);
+  REQUIRE(dut.m_storage[0x1234] == 0x20);
+  REQUIRE(dut.m_storage[0x1237] == 0x21);
+}
+
+TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
+  tc.reset(4711);
+  TestType dut;
+  dut.m_write_protected = true;
+  dut.start();
+
+  REQUIRE(dut.m_write_protected);
+
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_1);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_2);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0x80);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_3);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_4);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTION_DISABLE_5);
+
+  tc.advance(TestType::T_BLC_USEC / 2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0x20);
+
+  REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
+
+  tc.advance(TestType::T_WC_USEC);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(!dut.m_write_protected);
+}
+
+TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
+  tc.reset(4711);
+  TestType dut;
+  const uint8_t base = 0xbd;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  // Also keep our expected view of what's in the EEPROM:
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  // Filled with the base value, initially.
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  dut.start();
+
+  auto page = GENERATE(take(5, random((int)0, (int)(TestType::TOTAL_SIZE_BYTES / TestType::PAGE_SIZE_BYTES)-1)));
+  auto n_bytes = 7 + (rand() % (TestType::PAGE_SIZE_BYTES - 7));
+  for (int i = 0; i < n_bytes; i++) {
+    auto address = page * TestType::PAGE_SIZE_BYTES + (rand() & TestType::PAGE_OFFSET_MASK);
+    uint8_t v = rand() & 0xff;
+    dut.write(address, v);
+    // advance by less than T_BLC
+    tc.advance(TestType::T_BLC_USEC / 2);
+    // We should still be in the buffering state
+    REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+
+    // also update our expected view of memory
+    expected[address] = v;
+  }
+
+  // allow the programming cycle to happen
+  tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", types) {
+  tc.reset(4711);
+  TestType dut;
+  const uint8_t base = 0xbd;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  // Also keep our expected view of what's in an ontouched page of the EEPROM:
+  std::array<uint8_t, TestType::PAGE_SIZE_BYTES> expected;
+  // Filled with the base value, initially.
+  std::memset(&expected[0], base, TestType::PAGE_SIZE_BYTES);
+
+  dut.start();
+
+  constexpr auto n_pages = TestType::TOTAL_SIZE_BYTES / TestType::PAGE_SIZE_BYTES;
+  constexpr auto last_page = n_pages - 1;
+
+  auto page = GENERATE(take(5, random((int)0, (int)last_page)));
+
+  auto first_address = page * TestType::PAGE_SIZE_BYTES + (rand() & TestType::PAGE_OFFSET_MASK);
+  if (first_address == (0x5555 & TestType::ADDRESS_MASK)) {
+    // ensure we don't look like we're trying to start a command sequence
+    first_address++;
+  }
+  uint8_t v = rand() & 0xff;
+  dut.write(first_address, v);
+  // advance by less than T_BLC
+  tc.advance(TestType::T_BLC_USEC / 2);
+  // We should now be in the buffering state
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+
+  auto n_bytes = 7 + (rand() % (TestType::PAGE_SIZE_BYTES - 7));
+  for (int i = 1; i < n_bytes; i++) {
+    // Write to _any_ address - 50% of the time on the same page, 50% of the time, maybe not!
+    uint32_t address = (rand() & 1) 
+      ? (rand() & TestType::ADDRESS_MASK) 
+      : page * TestType::PAGE_SIZE_BYTES + (rand() & TestType::PAGE_OFFSET_MASK);
+    uint8_t v = rand() & 0xff;
+    dut.write(address, v);
+    // advance by less than T_BLC
+    tc.advance(TestType::T_BLC_USEC / 2);
+    // We should still be in the buffering state
+    REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  }
+
+  // allow the programming cycle to happen
+  tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+
+  // Check no pages other than the first page touched, have changed 
+  // - and that the first-touched page _has_ changed.
+  for (auto p = 0; p < n_pages; p++) {
+    auto comparison_result = std::memcmp(&dut.m_storage[(p * TestType::PAGE_SIZE_BYTES)], &expected[0], TestType::PAGE_SIZE_BYTES);
+    if (p == page) {
+      REQUIRE(comparison_result != 0);
+    } else {
+      REQUIRE(comparison_result == 0);
     }
   }
 }
