@@ -192,8 +192,8 @@ protected:
 		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = false.
 	};
 
-  std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
-  bool m_program_buffer_to_eeprom;
+	std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
+	bool m_program_buffer_to_eeprom;
 	Timer *m_start_programming_timer;
 	Timer *m_programming_completed_timer;
 	uint32_t m_last_written_offset;
