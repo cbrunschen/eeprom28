@@ -11,8 +11,6 @@
 #include <tuple>
 #include <cstring>
 
-Clock tc; // the test clock
-
 using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28f256, x28ft256>;
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
@@ -21,10 +19,12 @@ TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
 		TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
 	printf("T_BLC = %d usec, T_WC = %d usec, ProgramOnRead = %s\r\n",
 		TestType::T_BLC_USEC, TestType::T_WC_USEC, TestType::PROGRAM_ON_READ ? "true" : "false");
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
-	tc.reset(4711L);
+	global_clock.reset(4711L);
 	TestType dut;
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -39,13 +39,13 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
 	auto t_into_blc = TestType::T_BLC_USEC / 2;
 	auto t_blc_remaining = TestType::T_BLC_USEC - t_into_blc;
 
-	tc.advance(t_into_blc);
+	global_clock.advance(t_into_blc);
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
 	// Advance to the programming cycle
 	if (TestType::T_BLC_USEC > 0) {
 		// advance into the middle of the programming cycle.
-		tc.advance(t_blc_remaining + TestType::T_WC_USEC / 2);
+		global_clock.advance(t_blc_remaining + TestType::T_WC_USEC / 2);
 	} else {
 		// when T_BLC_USEC == 0, we must trigger the programming cycle by reading
 		dut.read(i);
@@ -60,7 +60,7 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
 		REQUIRE(dut.read(i) != v);
 
 		// advance past the end of the programming cycle
-		tc.advance(TestType::T_WC_USEC);
+		global_clock.advance(TestType::T_WC_USEC);
 		REQUIRE(dut.m_state == TestType::STATE_IDLE);
 	}
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
@@ -75,10 +75,12 @@ TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
 
 	// Check that the contents match: i.e., only the written-to address has changed.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
-	tc.reset(4711L);
+	global_clock.reset(4711L);
 
 	const uint8_t base = 0x5e;
 	TestType dut;
@@ -95,11 +97,11 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 	dut.write(i, v);
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-	tc.advance(TestType::T_BLC_USEC / 10);
+	global_clock.advance(TestType::T_BLC_USEC / 10);
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
 	if (TestType::T_BLC_USEC > 0 && TestType::T_WC_USEC > 0) {
-		tc.advance(TestType::T_BLC_USEC);
+		global_clock.advance(TestType::T_BLC_USEC);
 		REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
 	}
 
@@ -117,15 +119,17 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 		REQUIRE(next != last);
 		REQUIRE((next & 0x3f) == (base & 0x3f));
 
-		tc.advance(TestType::T_WC_USEC);
+		global_clock.advance(TestType::T_WC_USEC);
 	}
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
 
 	REQUIRE(dut.read(i) == base);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	dut.m_write_enabled = true; // start with writes enabled / no write protection.
 	dut.device_start();
@@ -135,19 +139,19 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 
 	dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
 
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
 	REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
 
 	if (TestType::T_BLC_USEC > 0) {
-		tc.advance(TestType::T_BLC_USEC);
+		global_clock.advance(TestType::T_BLC_USEC);
 	} else {
 		// we must trigger programming through read(), somewhere.
 		dut.read(0);
@@ -155,15 +159,17 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 
 	if (TestType::T_WC_USEC > 0) {
 		REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
-		tc.advance(TestType::T_WC_USEC);
+		global_clock.advance(TestType::T_WC_USEC);
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
 	REQUIRE(!dut.m_write_enabled);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	dut.m_write_enabled = false;  // start with writes disabled / write protection on.
 	dut.device_start();
@@ -173,45 +179,45 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 	dut.write((0x5555 & TestType::ADDRESS_MASK), 0xaa);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 
 	dut.write((0x2aaa & TestType::ADDRESS_MASK), 0x55);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write((0x5555 & TestType::ADDRESS_MASK), 0xa0);
 
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
 	REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x1231, 0x19);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_buffering_page == (0x1230 & TestType::PAGE_MASK));
 	REQUIRE(dut.m_program_buffer_to_eeprom);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x1234, 0x20);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_program_buffer_to_eeprom);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x1237, 0x21);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_program_buffer_to_eeprom);
 
 	if (TestType::T_BLC_USEC > 0) {
-		tc.advance(TestType::T_BLC_USEC);
+		global_clock.advance(TestType::T_BLC_USEC);
 	} else {
 		dut.read(0);
 	}
 
 	if (TestType::T_WC_USEC > 0) {
 		REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
-		tc.advance(TestType::T_WC_USEC);
+		global_clock.advance(TestType::T_WC_USEC);
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
@@ -221,10 +227,12 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 	REQUIRE(dut.m_storage[0x1231] == 0x19);
 	REQUIRE(dut.m_storage[0x1234] == 0x20);
 	REQUIRE(dut.m_storage[0x1237] == 0x21);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	dut.m_write_enabled = false;
 	dut.device_start();
@@ -235,46 +243,48 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 
 	dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0x80);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_3);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_4);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_PROTECION_DISABLE_5);
 
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0x20);
 
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
 
 	if (TestType::T_WC_USEC > 0) {
 		REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
-		tc.advance(TestType::T_WC_USEC);
+		global_clock.advance(TestType::T_WC_USEC);
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
 	REQUIRE(dut.m_write_enabled);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	const uint8_t base = 0xbd;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -293,7 +303,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 		uint8_t v = rand() & 0xff;
 		dut.write(address, v);
 		// advance by less than T_BLC
-		tc.advance(TestType::T_BLC_USEC / 2);
+		global_clock.advance(TestType::T_BLC_USEC / 2);
 		// We should still be in the buffering state
 		REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
@@ -303,7 +313,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 
 	if (TestType::T_BLC_USEC > 0) {
 		// allow the programming cycle to happen
-		tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+		global_clock.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
 	} else {
 		// trigger the programming cycle
 		dut.read(0);
@@ -311,10 +321,12 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", types) {
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	const uint8_t base = 0xbd;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -339,7 +351,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 	uint8_t v = rand() & 0xff;
 	dut.write(first_address, v);
 	// advance by less than T_BLC
-	tc.advance(TestType::T_BLC_USEC / 2);
+	global_clock.advance(TestType::T_BLC_USEC / 2);
 	// We should now be in the buffering state
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
@@ -352,14 +364,14 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 		uint8_t v = rand() & 0xff;
 		dut.write(address, v);
 		// advance by less than T_BLC
-		tc.advance(TestType::T_BLC_USEC / 2);
+		global_clock.advance(TestType::T_BLC_USEC / 2);
 		// We should still be in the buffering state
 		REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 	}
 
 	if (TestType::T_BLC_USEC > 0) {
 		// allow the programming cycle to happen
-		tc.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
+		global_clock.advance(TestType::T_BLC_USEC + TestType::T_WC_USEC + 1000);
 	} else {
 		// trigger the programming cycle
 		dut.read(0);
@@ -375,12 +387,14 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 			REQUIRE(comparison_result == 0);
 		}
 	}
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon read", "") {
 	using TestType = x28f256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -407,12 +421,14 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon r
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately upon read", "") {
 	using TestType = x28f256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -449,12 +465,14 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately 
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold immediately upon read", "") {
 	using TestType = x28ft256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -481,12 +499,14 @@ TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold immediately 
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC timer expipred", "") {
 	using TestType = x28ft256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -507,7 +527,7 @@ TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC 
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-	tc.advance(3 * TestType::T_BLC_USEC / 2);
+	global_clock.advance(3 * TestType::T_BLC_USEC / 2);
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
 
@@ -516,12 +536,14 @@ TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC 
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold immediately upon read", "") {
 	using TestType = x28ft256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -558,12 +580,14 @@ TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold immedi
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }
 
 TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold upon T_BLC timer expiry", "") {
 	using TestType = x28ft256;
 
-	tc.reset(4711);
+	global_clock.reset(4711);
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
@@ -594,7 +618,7 @@ TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold upon T
 
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-	tc.advance(3 * TestType::T_BLC_USEC / 2);
+	global_clock.advance(3 * TestType::T_BLC_USEC / 2);
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
 
@@ -603,4 +627,6 @@ TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold upon T
 
 	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
 	REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
 }

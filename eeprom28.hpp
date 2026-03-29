@@ -84,8 +84,6 @@ public:
 	// construction/destruction
 	eeprom28() { }
 	virtual ~eeprom28() {
-		if (m_start_programming_timer) timer_delete(m_start_programming_timer);
-		if (m_programming_completed_timer) timer_delete(m_programming_completed_timer);
 	}
 
 	void write(uint32_t offset, uint8_t data);
@@ -194,8 +192,8 @@ protected:
 
 	std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
 	bool m_program_buffer_to_eeprom;
-	Timer *m_start_programming_timer;
-	Timer *m_programming_completed_timer;
+	emu_timer *m_start_programming_timer;
+	emu_timer *m_programming_completed_timer;
 	uint32_t m_last_written_offset;
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;

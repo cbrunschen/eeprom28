@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <functional>
 #include <list>
+#include <set>
 
 struct attotime {
 	static uint64_t from_usec(int usec) { return usec; }
@@ -13,11 +14,11 @@ struct attotime {
 	const static uint64_t never = (1UL << 63); // _lots_ ot microseconds.
 };
 
-struct Timer;
+struct emu_timer;
 
 struct Clock {
 	uint64_t now = 0;
-	std::list<Timer *>timers;
+	std::list<emu_timer *>timers;
 
 	void advance(uint64_t usec);
 	void reset(uint64_t now);
@@ -25,46 +26,50 @@ struct Clock {
 	uint64_t next_event();
 };
 
-extern Clock tc;
+extern Clock global_clock;
+extern std::set<emu_timer *>global_timers;
 
-struct Timer {
-	Clock &clock;
+struct emu_timer {
 	uint64_t scheduled_at;
 	std::function<void(void)> callback;
 
-	Timer(Clock &clock, std::function<void(void)> callback) 
-	: clock(clock)
-	, scheduled_at(clock.now - 1)
+	emu_timer(Clock &clock, std::function<void(void)> callback) 
+	: scheduled_at(clock.now - 1)
 	, callback(callback) {
 	} 
 
 	void adjust(uint64_t usec) {
-		scheduled_at = usec == attotime::never ? attotime::never : clock.now + usec;
+		scheduled_at = usec == attotime::never ? attotime::never : global_clock.now + usec;
 		enable(true);
 	}
 
 	void enable(bool enabled) {
-		clock.timers.remove(this);
+		global_clock.timers.remove(this);
 		if (enabled)
-			clock.timers.push_back(this);
+			global_clock.timers.push_back(this);
 	}
 };
 
-Timer *timer_alloc(std::function<void(void)> callback) {
-	return new Timer(tc, callback);
+inline emu_timer *timer_alloc(std::function<void(void)> callback) {
+	auto timer = new emu_timer(global_clock, callback);
+	global_timers.insert(timer);
+	return timer;
 }
 
-void timer_delete(Timer *t) {
-	if (t) {
-		t->enable(false);
-		delete t;
+inline void cleanup_global_timers() {
+	while (!global_timers.empty()) {
+		auto pt = global_timers.begin();
+		global_timers.erase(pt);
+		auto timer = *pt;
+		global_clock.timers.remove(timer);
+		delete timer;
 	}
 }
 
 inline bool Clock::has_events() { return !timers.empty(); }
 inline uint64_t Clock::next_event() { 
 	auto i = std::min_element(timers.begin(), timers.end(), 
-			[](const Timer *a, const Timer *b) { return a->scheduled_at < b->scheduled_at; });
+			[](const emu_timer *a, const emu_timer *b) { return a->scheduled_at < b->scheduled_at; });
 	return (*i)->scheduled_at;
 }
 
@@ -86,12 +91,8 @@ inline void Clock::advance(uint64_t usec) {
 }
 
 inline void Clock::reset(uint64_t now) {
-	// remove any previously added timers.
-	while (!timers.empty()) {
-		Timer *t = *timers.begin();
-		timers.pop_front();
-		timer_delete(t);
-	}
+	cleanup_global_timers();
+	timers.clear();
 
 	this->now = now;
 }
