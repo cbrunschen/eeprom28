@@ -45,8 +45,8 @@
  *   After a byte write, if another byte on the same page is written within T_BLC, 
  *   those writes will be combined in a single programming cycle. Or in other words,
  *   the programming cycle starts T_BLC after the most recent write.
- *   Xicor X28C256 has T_BLC = 100 mucroseconds; AT28C256 has T_BLC = 150 microseconds.
- *   If TBlcUsec == 0, then there is no timed end to the Byte Load Cycle, so we
+ *   Xicor X28C256 has T_BLC = 100 microseconds; AT28C256 has T_BLC = 150 microseconds.
+ *   If TBLCUsec == 0, then there is no timed end to the Byte Load Cycle, so we
  *   _must_ trigger programming in some other way. The only way to do that is to triggger
  *   programming on read(), so that is what we do. See also ProgramOnRead below, for
  *   explicitly enabling this behaviour.
@@ -113,7 +113,7 @@ protected:
 	virtual void device_start();
 
 #ifndef EEPROM28_VISIBLE_FOR_TESTING
-private:
+protected:
 #endif // EEPROM28_VISIBLE_FOR_TESTING
 
 	// Change State to a new internal state
@@ -141,13 +141,14 @@ private:
 		// or remaining in write-protected mode.
 		STATE_PROTECTED_WRITE,
 
-		// When a write operation starts, this selects a 64-byte page that is being written,
-		// and writes the byte to this buffer.
-		// As long as the next write is to the same page (A6-A14 remain the same) and the next
-		// write is initiated within 100 microseconds, more bytes can be written, and those
-		// too will be buffered. 
-		// If no more writes happen within 100 microseconds, thw programming cycle starts,
-		// during which time the buffer will be saved to the corresponding page in the EEPROM.
+		// When a write operation starts, this selects a page that is being written,
+		// and writes the byte to an internal buffer.
+		// As long as the next write is to the same page (higher address bits remain
+		// the same) and the next write is initiated within T_BLC, more bytes can be
+		// written, and those too will be written to the internal buffer. 
+		// If no more writes happen within T_BLC, thw programming cycle starts,
+		// during which time the buffer will be saved to the corresponding page in
+		// the persistent EEPROM storage.
 		STATE_BUFFERING,
 
 		// Buffered data is being programmed into the EEPROM.
@@ -162,21 +163,30 @@ private:
 		// after detecting the first write that initiates a command sequence,
 		// writing AA to address 5555 (1555 on X28C64)
 		COMMAND_STATE_1,
+
 		// after detecting the second write  that initiates a command sequence,
 		// writing 55 to address 2AAA (0AAA on X28C64)
 		COMMAND_STATE_2,
-		// If in this state the client writes 
+		// If in this state the client writes A0 to 5555 (1555 on X28C64),
+		// that concludes the Protection Enable command sequence and enters
+		// the Protected Write state: allowing writes to one page, at the end of which
+		// the device will enter the Write Protected state.
+		// If instead the client writes  80 to 5555 (1555 on X28C64), this continues
+		// the Protection Disable command sequence.
 
 
 		// after detecting the third write that initiates a protection disable command sequence,
 		// writing 80 to address 5555 (1555 on X28C64)
 		COMMAND_STATE_PROTECION_DISABLE_3,
+
 		// after detecting the fourth write that initiates a protection disable command sequence,
 		// writing AA to address 5555 (1555 on X28C64)
 		COMMAND_STATE_PROTECION_DISABLE_4,
+
 		// after detecting the fifth write that initiates a protection disable command sequence.
 		// writing 55 to address 2AAA (0AAA on X28C64)
 		COMMAND_STATE_PROTECION_DISABLE_5,
+
 		// after detecting the sixth write in the protection disable command sequence, 
 		// writing 20 to address 5555 (1555 on X28C64),
 		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = false.
@@ -204,14 +214,20 @@ class x28c256 : public eeprom28<15, 64, 100, 5000> {};
 class x28hc256 : public eeprom28<15, 64, 100, 3000> {};
 class x28c512 : public eeprom28<16, 128, 100, 5000> {};
 class x28c010 : public eeprom28<17, 256, 100, 5000> {};
-class xm28c020 : public eeprom28<18, 128, 100, 5000> {}; // 4 x28c513:s i na single package
+class xm28c020 : public eeprom28<18, 128, 100, 5000> {}; // 4 x28c512:s in a single package
 class xm28c040 : public eeprom28<19, 256, 100, 5000> {}; // 4 x28c010:s in a single package
 
-// a 256 kbit == 32 kbyte "fast" that uses no timers, relying on the client to
+// a 256 kbit == 32 kbyte "fast" EEPROM that uses no timers, relying on the client to
 // read() after performing a sequence of writes, at which point the pending writes 
 // are immediately committed and ready, and returned without Toggle Bit polling
 // or /DATA polling
-class f28f256 : public eeprom28<15, 64, 0, 0> {};
+class x28f256 : public eeprom28<15, 64, 0, 0> {};
+
+// a 256 kbit == 32 kbyte "fast timed" that uses only the Byte Load Cycle timer and
+// also programs immediately on reading; where the Write Cycle is effectively
+// infinitely quick and any pending writes are immediately committed and ready, 
+// and returned without Toggle Bit polling or /DATA polling
+class x28ft256 : public eeprom28<15, 64, 100, 0, true> {};
 
 #include "eeprom28.ipp"
 

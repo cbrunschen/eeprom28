@@ -1,6 +1,6 @@
 /***************************************************************************
 
-    28-series Parallel EEPROM sich as Xicor X28, Atmel AT28, etc.
+    28-series Parallel EEPROM sich as Xicor X28 etc.
 		Caters for different speeds such as X28C256, X28HC256, etc.
 		Caters for different storage sizes such as X28C64, X28C256, etc.
 
@@ -127,15 +127,15 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
     } else if (m_command_state == COMMAND_STATE_2) {
       if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xa0)) {
         // We've received a complete "enable write protection" command, so we:
-        // Enable write protection, i.e., disable writes;
+        // - Enable write protection, i.e., disable writes;
         m_write_enabled = false;
-        // note that we are no longer in a command sequence;
+        // - Note that we are no longer in a command sequence;
         change_to_command_state(COMMAND_STATE_NONE);
-        // but also enter the overall "protected write" state to potentially accept some writes.
+        // - Also enter the overall "protected write" state to potentially accept some writes.
         change_to_state(STATE_PROTECTED_WRITE);
-        // Note that this was the last written offset
+        // - Note that this was the last written offset
         m_last_written_offset = offset;
-        // and that concludes what we do in this write cycle.
+        // - And that concludes what we do in this write cycle.
         return;
       } else if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0x80)) {
         change_to_command_state(COMMAND_STATE_PROTECION_DISABLE_3);
@@ -157,11 +157,11 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
     } else if (m_command_state == COMMAND_STATE_PROTECION_DISABLE_5) {
       if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0x20)) {
         // We have now received a complete "disable write protection" command. So we:
-        // enable writes.
+        // - Enable writes.
         m_write_enabled = true;
-        // Note that we're no longer in a command sequence.
+        // = Note that we're no longer in a command sequence.
         change_to_command_state(COMMAND_STATE_NONE);
-        // Write protection was disabled, and the preceding writes were just part of that command sequence.
+        // - Write protection was disabled, and the preceding writes were just part of that command sequence.
         m_program_buffer_to_eeprom = false;
         // printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
 
@@ -170,9 +170,9 @@ void eeprom28<AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead>::wri
           m_start_programming_timer->enable(false);
         }
         
-        // and start the programming cycle
+        // - Sart the programming cycle
         start_programming_cycle();
-        // and now we're done with this write.
+        // - and now we're done with this write.
         return;
       } else {
         command_state_machine_error();

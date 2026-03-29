@@ -13,12 +13,14 @@
 
 Clock tc; // the test clock
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, f28f256>;
+using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28f256, x28ft256>;
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
   printf("%s: ", typeid(TestType).name());
-  printf("AddressBits = %d, TotalSizeBytes = %d, PageSizeBytes = %d, ", TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
-  printf("T_BLC = %d usec, T_WC = %d usec\r\n", TestType::T_BLC_USEC, TestType::T_WC_USEC);
+  printf("AddressBits = %d, TotalSizeBytes = %d, PageSizeBytes = %d, ",
+    TestType::ADDRESS_BITS, TestType::TOTAL_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
+  printf("T_BLC = %d usec, T_WC = %d usec, ProgramOnRead = %s\r\n",
+    TestType::T_BLC_USEC, TestType::T_WC_USEC, TestType::PROGRAM_ON_READ ? "true" : "false");
 }
 
 TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
@@ -96,7 +98,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
   tc.advance(TestType::T_BLC_USEC / 10);
   REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
 
-  if (TestType::T_BLC_USEC > 0) {
+  if (TestType::T_BLC_USEC > 0 && TestType::T_WC_USEC > 0) {
     tc.advance(TestType::T_BLC_USEC);
     REQUIRE(dut.m_state == TestType::STATE_PROGRAMMING);
   }
@@ -376,7 +378,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 }
 
 TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon read", "") {
-  using TestType = f28f256;
+  using TestType = x28f256;
 
   tc.reset(4711);
   TestType dut;
@@ -408,7 +410,7 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon r
 }
 
 TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately upon read", "") {
-  using TestType = f28f256;
+  using TestType = x28f256;
 
   tc.reset(4711);
   TestType dut;
@@ -443,6 +445,160 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately 
   uint8_t actual = dut.read(offset);
 
   REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold immediately upon read", "") {
+  using TestType = x28ft256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = true;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  // write to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  uint8_t actual = dut.read(offset);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC timer expipred", "") {
+  using TestType = x28ft256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = true;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  // write to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+
+  tc.advance(3 * TestType::T_BLC_USEC / 2);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  uint8_t actual = dut.m_storage[offset];
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold immediately upon read", "") {
+  using TestType = x28ft256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = false;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  // Perform the write protection command sequence
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
+
+  // write some data to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+  uint8_t actual = dut.read(offset);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+  REQUIRE(actual == value);
+
+  // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+  REQUIRE(std::memcmp(&dut.m_storage[0], &expected[0], TestType::TOTAL_SIZE_BYTES) == 0);
+}
+
+TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold upon T_BLC timer expiry", "") {
+  using TestType = x28ft256;
+
+  tc.reset(4711);
+  TestType dut;
+  uint8_t base = 0xd9;
+  std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+  dut.m_write_enabled = false;
+  dut.device_start();
+
+  std::array<uint8_t, TestType::TOTAL_SIZE_BYTES> expected;
+  std::memset(&expected[0], base, TestType::TOTAL_SIZE_BYTES);
+
+  auto offset = GENERATE(take(17, random((uint32_t)0, (uint32_t)TestType::TOTAL_SIZE_BYTES-1)));
+  uint8_t value = 0x3a;
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  // Perform the write protection command sequence
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
+  dut.write(0x2aaa & TestType::ADDRESS_MASK, 0x55);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_2);
+  dut.write(0x5555 & TestType::ADDRESS_MASK, 0xa0);
+  REQUIRE(dut.m_state == TestType::STATE_PROTECTED_WRITE);
+  REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_NONE);
+
+  // write some data to our device under test
+  dut.write(offset, value);
+  // also update our expected view of memory
+  expected[offset] = value;
+
+  REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
+
+  tc.advance(3 * TestType::T_BLC_USEC / 2);
+
+  REQUIRE(dut.m_state == TestType::STATE_IDLE);
+
+  uint8_t actual = dut.m_storage[offset];
   REQUIRE(actual == value);
 
   // Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
