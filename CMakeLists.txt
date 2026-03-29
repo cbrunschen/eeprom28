@@ -3,7 +3,8 @@ set(CXX_STANDARD 20)
 
 project(X28C VERSION 0.1.0 LANGUAGES C CXX)
 
-add_library(eeprom28 eeprom28.cpp)
+# eeprom28 is header-only; otherwise there would have been something like:
+# add_library(eeprom28 eeprom28.cpp)
 
 Include(FetchContent)
 
