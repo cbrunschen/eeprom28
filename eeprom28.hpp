@@ -209,7 +209,7 @@ protected:
 
 class x28c64 : public eeprom28<13, 64, 100, 5000> {};
 class x28c256 : public eeprom28<15, 64, 100, 5000> {};
-class x28hc256 : public eeprom28<15, 64, 100, 3000> {};
+class x28hc256 : public eeprom28<15, 128, 100, 3000> {};
 class x28c512 : public eeprom28<16, 128, 100, 5000> {};
 class x28c010 : public eeprom28<17, 256, 100, 5000> {};
 class xm28c020 : public eeprom28<18, 128, 100, 5000> {}; // 4 x28c512:s in a single package
