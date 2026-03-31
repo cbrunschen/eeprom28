@@ -219,7 +219,7 @@ class xm28c040 : public eeprom28<19, 256, 100, 5000> {}; // 4 x28c010:s in a sin
 // read() after performing a sequence of writes, at which point the pending writes 
 // are immediately committed and ready, and returned without Toggle Bit polling
 // or /DATA polling
-class x28f256 : public eeprom28<15, 64, 0, 0> {};
+class x28i256 : public eeprom28<15, 64, 0, 0> {};
 
 // a 256 kbit == 32 kbyte "fast timed" that uses only the Byte Load Cycle timer and
 // also programs immediately on reading; where the Write Cycle is effectively

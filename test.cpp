@@ -11,7 +11,7 @@
 #include <tuple>
 #include <cstring>
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28f256, x28ft256>;
+using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28ft256>;
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
 	printf("%s: ", typeid(TestType).name());
@@ -392,7 +392,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 }
 
 TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon read", "") {
-	using TestType = x28f256;
+	using TestType = x28i256;
 
 	global_clock.reset(4711);
 	TestType dut;
@@ -426,7 +426,7 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon r
 }
 
 TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately upon read", "") {
-	using TestType = x28f256;
+	using TestType = x28i256;
 
 	global_clock.reset(4711);
 	TestType dut;
