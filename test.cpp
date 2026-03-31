@@ -11,7 +11,7 @@
 #include <tuple>
 #include <cstring>
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28ft256>;
+using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28f256>;
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
 	printf("%s: ", typeid(TestType).name());
@@ -470,7 +470,7 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately 
 }
 
 TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold immediately upon read", "") {
-	using TestType = x28ft256;
+	using TestType = x28f256;
 
 	global_clock.reset(4711);
 	TestType dut;
@@ -504,7 +504,7 @@ TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold immediately 
 }
 
 TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC timer expipred", "") {
-	using TestType = x28ft256;
+	using TestType = x28f256;
 
 	global_clock.reset(4711);
 	TestType dut;
@@ -541,7 +541,7 @@ TEST_CASE("Fast Timed EEPROM, not write protected, write takes hold after T_BLC 
 }
 
 TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold immediately upon read", "") {
-	using TestType = x28ft256;
+	using TestType = x28f256;
 
 	global_clock.reset(4711);
 	TestType dut;
@@ -585,7 +585,7 @@ TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold immedi
 }
 
 TEST_CASE("Fast Timed EEPROM, write protected, protected write takes hold upon T_BLC timer expiry", "") {
-	using TestType = x28ft256;
+	using TestType = x28f256;
 
 	global_clock.reset(4711);
 	TestType dut;

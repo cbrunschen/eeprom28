@@ -225,7 +225,7 @@ class x28i256 : public eeprom28<15, 64, 0, 0> {};
 // also programs immediately on reading; where the Write Cycle is effectively
 // infinitely quick and any pending writes are immediately committed and ready, 
 // and returned without Toggle Bit polling or /DATA polling
-class x28ft256 : public eeprom28<15, 64, 100, 0, true> {};
+class x28f256 : public eeprom28<15, 64, 100, 0, true> {};
 
 #include "eeprom28.ipp"
 
