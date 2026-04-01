@@ -672,8 +672,9 @@ TEMPLATE_LIST_TEST_CASE("Write to both data and ID page", "", atmels) {
 	dut.start();
 
 	auto onpage = GENERATE(take(17, random((int)0, (int)TestType::PAGE_SIZE_BYTES-1)));
+	auto opposite = onpage ^ TestType::PAGE_OFFSET_MASK;
 	auto i = TestType::ID_PAGE_OFFSET + onpage;
-	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage - 1);
+	auto mi = TestType::ID_PAGE_OFFSET + opposite;
 
 	uint8_t v = GENERATE(take(3, random(0, 255)));
 	uint8_t w = 0xff ^ v;
@@ -716,8 +717,9 @@ TEMPLATE_LIST_TEST_CASE("Read from both data and ID page", "", atmels) {
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
 
 	auto onpage = GENERATE(take(17, random((int)0, (int)TestType::PAGE_SIZE_BYTES-1)));
+	auto opposite = onpage ^ TestType::PAGE_OFFSET_MASK;
 	auto i = TestType::ID_PAGE_OFFSET + onpage;
-	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage - 1);
+	auto mi = TestType::ID_PAGE_OFFSET + opposite;
 
 	uint8_t v = GENERATE(take(3, random(0, 255)));
 	uint8_t w = 0xff ^ v;
