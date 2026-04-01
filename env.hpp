@@ -96,5 +96,18 @@ inline void Clock::reset(uint64_t now) {
 
 	this->now = now;
 }
+ 
+class device_t {
+public:
+	void start() { device_start(); m_started = true; }
+	void reset() { device_reset(); m_started = false; }
+
+	virtual void device_start() = 0;
+	virtual void device_reset() = 0;
+
+	bool started() { return m_started; }
+
+	bool m_started = false;
+};
 
 #endif // ENV_HPP

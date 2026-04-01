@@ -39,6 +39,7 @@
  * PageSizeBytes:
  *   These EEPROMs support writing an entire page at a time. These page sizes vary
  *   by EEPROM size and by manufacturer. 64 and 128 byte page sizes are both common.
+ *   *Must* be a power of two.
  * 
  * TBLCUsec:
  *   The EEPROM's T_BLC, the "Byte Load Cycle Time", in microseconds.
@@ -71,44 +72,130 @@
  *   This can be used for example for external EEPROM cartridges, where emulating the precise
  *   timing of a particular chip is unlikely to be very important, and instead, allowing
  *   that cartridge to be as quick as possible may give a more pleasant user experience.
+ * 
+ * HasIdPage:
+ *   In addition to the data, has an extra page if "identification" data, which is accessed by
+ *   calling `set_access_id_page(1)`, which allows the ID page to be accessed at the top of
+ *   the chip's address range.
+ *   On Atmel AT28 EEPROMs, this is achieved by driving pin A9 to +12V.
+ * 
+ * HasHardwareChipErase:
+ *   While `chip_erase` is asserted (by `set_chip_erase(1)`), a write to any address will trigger
+ *   erasing all data on the chip. This will set all data, including any ID data, to 0xff.
+ *   This will take TCEUsec microseconds (20ms == 20000us by default).
+ *   On Atmel AT28 series chipe, this is achieved by driving pin /OE (Output enable)
+ *   to +12V.
+ * 
+ * HasSoftwareChipErase:
+ *   In addition to the usual software write protection commands, adds a further command.
+ *   If, at the end of the "protection disable" command sequence, instead of writing a final
+ *   0x20 (to disable write protection) the host writes 0x10, then a software chip erase
+ *   is initiated. This will set all data (including any ID data) to 0xff. This will take
+ *   TCEUsec microseconds (20ms == 20000us by default).
+ * 
+ * TCEUsec:
+ *   The time it takes for a Chip Erase, either hardware or software, to complete.
+ *   20ms == 20000us by default. If set to 0, chip erase will take effect immediately.
  */
 template<
 	int AddressBits, 
 	uint32_t PageSizeBytes, 
 	uint32_t TBLCUsec, 
 	uint32_t TWCUsec,
-	bool ProgramOnRead = false
+	bool ProgramOnRead = false,
+	bool HasIdPage = false,
+	bool HasHardwareChipErase = false,
+	bool HasSoftwareChipErase = false,
+	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
 >
-class eeprom28 {
+class eeprom28 
+: public device_t 
+{
 public:
 	// construction/destruction
 	eeprom28() { }
-	virtual ~eeprom28() {
-	}
+	virtual ~eeprom28() { }
 
 	void write(uint32_t offset, uint8_t data);
 	uint8_t read(uint32_t offset);
+
+	void fatalerror(std::string &s) {
+		fprintf(stderr, "ERROR: %s\n", s.c_str());
+		exit(-1);
+	}
+
+		// Allow users to override device timing.
+	void override_t_blc_usec(uint32_t t_blc_usec) {
+		if (started())
+			fatalerror("Cannot override T_BLC on a running device");
+		m_t_blc_usec = t_blc_usec;
+	}
+
+	void override_t_wc_usec(uint32_t t_wc_usec) {
+		if (started())
+			fatalerror("Cannot override T_WC on a running device");
+		m_t_wc_usec = t_wc_usec;
+	}
+
+	void override_program_on_read(bool program_on_read) {
+		if (started())
+			fatalerror("Cannot override PROGRAM_ON_READ on a running device");
+		m_program_on_read = program_on_read;
+	}
+
+	void override_t_ce_usec(uint32_t t_ce_usec) {
+		if (started())
+			fatalerror("Cannot override T_WC on a running device");
+		m_t_ce_usec = t_ce_usec;
+	}
+
+	void set_chip_erase(int state) {
+		if (HAS_HARDWARE_CHIP_ERASE) {
+			m_chip_erase = (state != 0);
+		}
+	}
+
+	void set_access_id_page(int state) {
+		if (HAS_ID_PAGE) {
+			m_access_id_page = (state != 0);
+		}
+	}
 
 #ifndef EEPROM28_VISIBLE_FOR_TESTING
 protected:
 #endif // EEPROM28_VISIBLE_FOR_TESTING
 
+	static constexpr bool HAS_ID_PAGE = HasIdPage;
+	static constexpr bool HAS_HARDWARE_CHIP_ERASE = HasHardwareChipErase;
+	static constexpr bool HAS_SOFTWARE_CHIP_ERASE = HasSoftwareChipErase;
+	static constexpr bool HAS_CHIP_ERASE = HAS_HARDWARE_CHIP_ERASE || HAS_SOFTWARE_CHIP_ERASE;
+
 	static constexpr uint32_t ADDRESS_BITS = AddressBits;
-	static constexpr uint32_t TOTAL_SIZE_BYTES = 1 << AddressBits;
-	static constexpr uint32_t ADDRESS_MASK = TOTAL_SIZE_BYTES - 1;
+	static constexpr uint32_t DATA_SIZE_BYTES = 1 << AddressBits;
+	static constexpr uint32_t ADDRESS_MASK = DATA_SIZE_BYTES - 1;
 	static constexpr uint32_t PAGE_SIZE_BYTES = PageSizeBytes;
-	static constexpr uint32_t T_BLC_USEC = TBLCUsec;
-	static constexpr uint32_t T_WC_USEC = TWCUsec;
-	static constexpr bool PROGRAM_ON_READ = (TBLCUsec == 0) || ProgramOnRead;
 
 	static constexpr uint32_t PAGE_OFFSET_MASK = PageSizeBytes - 1;
 	static constexpr uint32_t PAGE_MASK = ~(PAGE_OFFSET_MASK);
+
+	static constexpr uint32_t ID_PAGE_SIZE_BYTES = HasIdPage ? PageSizeBytes : 0;
+	static constexpr uint32_t ID_PAGE_OFFSET = DATA_SIZE_BYTES - ID_PAGE_SIZE_BYTES;
+	static constexpr uint32_t ID_PAGE = PAGE_MASK + 1;
+
+	static constexpr uint32_t TOTAL_SIZE_BYTES = DATA_SIZE_BYTES + ID_PAGE_SIZE_BYTES;
+
+	static constexpr uint32_t T_BLC_USEC = TBLCUsec;
+	static constexpr uint32_t T_WC_USEC = TWCUsec;
+	static constexpr bool PROGRAM_ON_READ = (TBLCUsec == 0) || ProgramOnRead;
+	static constexpr uint32_t T_CE_USEC = TCEUsec;
 
 	static constexpr uint8_t INVERSE_DATA_BIT = 1 << 7;
 	static constexpr uint8_t TOGGLE_BIT = 1 << 6;
 
 	// device-level overrides
 	virtual void device_start();
+	virtual void device_reset();
+
 
 #ifndef EEPROM28_VISIBLE_FOR_TESTING
 protected:
@@ -185,16 +272,21 @@ protected:
 		// writing 55 to address 2AAA (0AAA on X28C64)
 		COMMAND_STATE_PROTECION_DISABLE_5,
 
-		// after detecting the sixth write in the protection disable command sequence, 
-		// writing 20 to address 5555 (1555 on X28C64),
-		// the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = false.
+		// after detecting the sixth write in the protection disable command sequence:
+		// - writing 20 to address 5555 (1555 on X28C64),
+		//   the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = true.
+		// If HasSoftwareChipErase==true, then:
+		// - writing 10 to address 5555 (1555 on AT28C64x),
+		//   the device will perform a chip erase, filling its storage with FF. This will take TCEUsec.
+		//   While this is ongoing, Toggle Bit Polling will work, but as there was no specific most
+		//   recent address writte, /DATA Polling will not.
 	};
 
 	std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
-	bool m_program_buffer_to_eeprom;
-	emu_timer *m_start_programming_timer;
-	emu_timer *m_programming_completed_timer;
-	uint32_t m_last_written_offset;
+	bool m_program_buffer_to_eeprom = false;
+	emu_timer *m_start_programming_timer = nullptr;
+	emu_timer *m_programming_completed_timer = nullptr;
+	int32_t m_last_written_offset = -1;
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;
 	int m_command_state = COMMAND_STATE_NONE;
@@ -202,9 +294,38 @@ protected:
 	int m_buffering_page = 0;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
 
+		// Configurable overrides: initialize per the device's definition.
+	uint32_t m_t_blc_usec = T_BLC_USEC;
+	uint32_t m_t_wc_usec = T_WC_USEC;
+	bool m_program_on_read = PROGRAM_ON_READ;
+	uint32_t m_t_ce_usec = T_CE_USEC;
+
+	bool m_chip_erase = false;
+	bool m_access_id_page = false;
+
 	// Timer callbacks
 	void start_programming_cycle();
 	void programming_cycle_complete();
+
+	// Chip Erase
+	void start_erase_cycle();
+
+	// are we accessing the ID page?
+	bool is_accessing_id_page(uint32_t offset) {
+		if (HAS_ID_PAGE) {
+			return m_access_id_page && (offset & PAGE_MASK) == ID_PAGE_OFFSET;
+		} else {
+			return false;
+		}
+	}
+
+	uint32_t storage_offset(uint32_t offset) {
+		return is_accessing_id_page(offset) ? (offset - ID_PAGE_OFFSET + DATA_SIZE_BYTES) : offset;
+	}
+
+	uint32_t storage_page(uint32_t offset) {
+		return storage_offset(offset) & PAGE_MASK;
+	}
 };
 
 class x28c64 : public eeprom28<13, 64, 100, 5000> {};
@@ -227,6 +348,52 @@ class x28f256 : public eeprom28<15, 64, 100, 0, true> {};
 // or /DATA polling
 class x28i256 : public eeprom28<15, 64, 0, 0> {};
 
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead = false,
+	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
+>
+class at28 : public eeprom28
+<
+	AddressBits,
+	PageSizeBytes,
+	TBLCUsec,
+	TWCUsec,
+	ProgramOnRead,
+	true, // HasIdPage
+	true, // HasHardwareChipErase
+	true, // HasSoftwareChipErase
+	TCEUsec
+> {
+	using super = eeprom28<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		true, // HasIdPage
+		true, // HasHardwareChipErase
+		true, // HasSoftwareChipErase
+		TCEUsec
+	>;
+
+public:
+	void set_a9_12v(int state) {
+		super::set_access_id_page(state);
+	}
+
+	void set_oe_12v(int state) {
+		super::set_chip_erase(state);
+	}
+};
+
+class at28c64b : public at28<13, 64, 150, 10000> {};
+class at28hc64bf : public at28<13, 64, 150, 2000> {};
+class at28c256 : public at28<15, 64, 150, 10000> {};
+class at28c256f : public at28<15, 64, 150, 3000> {};
 
 #include "eeprom28.ipp"
 
