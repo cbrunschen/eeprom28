@@ -119,11 +119,6 @@ public:
 	void write(uint32_t offset, uint8_t data);
 	uint8_t read(uint32_t offset);
 
-	void fatalerror(std::string &s) {
-		fprintf(stderr, "ERROR: %s\n", s.c_str());
-		exit(-1);
-	}
-
 		// Allow users to override device timing.
 	void override_t_blc_usec(uint32_t t_blc_usec) {
 		if (started())

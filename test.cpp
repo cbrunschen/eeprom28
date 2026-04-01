@@ -668,11 +668,12 @@ TEMPLATE_LIST_TEST_CASE("Write to both data and ID page", "", atmels) {
 	TestType dut;
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
+
 	dut.start();
 
 	auto onpage = GENERATE(take(17, random((int)0, (int)TestType::PAGE_SIZE_BYTES-1)));
 	auto i = TestType::ID_PAGE_OFFSET + onpage;
-	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage);
+	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage - 1);
 
 	uint8_t v = GENERATE(take(3, random(0, 255)));
 	uint8_t w = 0xff ^ v;
@@ -716,18 +717,18 @@ TEMPLATE_LIST_TEST_CASE("Read from both data and ID page", "", atmels) {
 
 	auto onpage = GENERATE(take(17, random((int)0, (int)TestType::PAGE_SIZE_BYTES-1)));
 	auto i = TestType::ID_PAGE_OFFSET + onpage;
-	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage);
+	auto mi = TestType::ID_PAGE_OFFSET + (TestType::PAGE_SIZE_BYTES - onpage - 1);
 
 	uint8_t v = GENERATE(take(3, random(0, 255)));
 	uint8_t w = 0xff ^ v;
 	uint8_t x = 0x5a ^ v;
 
-	dut.start();
-
 	// Put the expected data into the device's storage
 	dut.m_storage[i] = v;
 	dut.m_storage[i + TestType::PAGE_SIZE_BYTES] = w;
 	dut.m_storage[mi] = x;
+
+	dut.start();
 
 	REQUIRE_BYTES(dut.read(i), v);
 	REQUIRE_BYTES(dut.read(mi), x);

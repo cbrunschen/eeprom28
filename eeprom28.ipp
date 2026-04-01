@@ -217,6 +217,8 @@ void eeprom28<
 	HasSoftwareChipErase,
 	TCEUsec
 >::write(uint32_t offset, uint8_t data) {
+	if (!started()) fatalerror("write(): device must be started!");
+
 	if (m_state == STATE_PROGRAMMING) {
 		// An attempt to write during a programming cycle does nothing.
 		printf("IN PROGRAMMING CYCLE: writing %02x @ %04x\n", data, offset);
@@ -401,6 +403,8 @@ uint8_t eeprom28<
 	HasSoftwareChipErase,
 	TCEUsec
 >::read(uint32_t offset) {
+	if (!started()) fatalerror("read(): device must be started!");
+
 	if (m_command_state != COMMAND_STATE_NONE) {
 		// Per the X28C256 datasheet regarding the command sequence,
 		//   "Note: Once initiated, the sequence of write operations

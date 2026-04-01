@@ -1,6 +1,8 @@
 #ifndef ENV_HPP
 #define ENV_HPP
 
+#include <catch2/catch_test_macros.hpp>
+
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
@@ -104,6 +106,11 @@ public:
 
 	virtual void device_start() = 0;
 	virtual void device_reset() = 0;
+
+	void fatalerror(const std::string &s) {
+		INFO(s);
+		REQUIRE(false);
+	}
 
 	bool started() { return m_started; }
 
