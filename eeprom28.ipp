@@ -34,200 +34,18 @@ void eeprom28<
 	HasHardwareChipErase,
 	HasSoftwareChipErase,
 	TCEUsec
->::device_start() {
-
-	using Self = eeprom28<
-		AddressBits,
-		PageSizeBytes,
-		TBLCUsec,
-		TWCUsec,
-		ProgramOnRead,
-		HasIdPage,
-		HasHardwareChipErase,
-		HasSoftwareChipErase,
-		TCEUsec
-	>;
-
-	if (m_t_blc_usec > 0 && m_start_programming_timer == nullptr) {
-		m_start_programming_timer = timer_alloc(std::bind(&Self::start_programming_cycle, this));
-	}
-
-	if ((m_t_wc_usec > 0  || (HAS_CHIP_ERASE && (m_t_ce_usec > 0))) && m_programming_completed_timer == nullptr) {
-		m_programming_completed_timer = timer_alloc(std::bind(&Self::programming_cycle_complete, this));
-	}
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::device_reset() {
-	if (m_start_programming_timer != nullptr)
-		m_start_programming_timer->enable(false);
-
-	if (m_programming_completed_timer != nullptr)
-		m_programming_completed_timer->enable(false);
-
-	change_to_state(COMMAND_STATE_NONE);
-	change_to_state(STATE_IDLE);
-
-	m_last_written_offset = -1;
-	m_write_enabled = true;
-	m_buffering_page = 0;
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::change_to_state(int ns) {
-	// printf("Changing state to %d\r\n", ns);
-	m_state = ns;
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::state_machine_error() {
-	change_to_state(m_write_enabled ? STATE_BUFFERING : STATE_IDLE);
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::change_to_command_state(int ns) {
-	// printf("Changing state to %d\r\n", ns);
-	m_command_state = ns;
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::command_state_machine_error() {
-	change_to_command_state(COMMAND_STATE_NONE);
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
 >::write(uint32_t offset, uint8_t data) {
-	if (!started()) fatalerror("write(): device must be started!");
-
 	if (m_state == STATE_PROGRAMMING) {
 		// An attempt to write during a programming cycle does nothing.
 		printf("IN PROGRAMMING CYCLE: writing %02x @ %04x\n", data, offset);
 		return;
 	}
 
-	if (HasHardwareChipErase && m_chip_erase != 0) {
-		start_erase_cycle();
-		return;
+	if constexpr (HAS_HARDWARE_CHIP_ERASE) {
+		if (m_chip_erase) {
+			start_erase_cycle();
+			return;
+		}
 	}
 
 	if (m_t_blc_usec > 0) {
@@ -292,37 +110,34 @@ void eeprom28<
 			}
 		} else if (m_command_state == COMMAND_STATE_PROTECION_DISABLE_5) {
 			if (offset == (0x5555 & ADDRESS_MASK)) { 
-				if (HasSoftwareChipErase && (data == 0x10)) {
-					// We have received a complete "Software Chip Erase command. So we:
-					// - Leave write protection as it is!
-					// - Note that we're no longer in a command sequence.
-					change_to_command_state(COMMAND_STATE_NONE);
-					// - The preceding writes were just part of that command sequence.
-					m_program_buffer_to_eeprom = false;
-					
-					// - Start the chip erase cycle
-					start_erase_cycle();
-					// - and now we're done with this write.
-					return;
-				} else if (data == 0x20) {
-					// We have now received a complete "disable write protection" command. So we:
-					// - Enable writes.
-					m_write_enabled = true;
-					// - Note that we're no longer in a command sequence.
-					change_to_command_state(COMMAND_STATE_NONE);
-					// - Write protection was disabled, and the preceding writes were just part of that command sequence.
-					m_program_buffer_to_eeprom = false;
-					// printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
-
-					if (m_t_blc_usec > 0) {
-						// Since we're explicitly starting the programming cycle, disable the timer
-						m_start_programming_timer->enable(false);
+				if constexpr (HAS_SOFTWARE_CHIP_ERASE) {
+					if (data == 0x10) {
+						// We have received a complete "Software Chip Erase command. So we:
+						// - Leave write protection as it is!
+						// - Note that we're no longer in a command sequence.
+						change_to_command_state(COMMAND_STATE_NONE);
+						// - The preceding writes were just part of that command sequence.
+						m_program_buffer_to_eeprom = false;
+						
+						// - Start the chip erase cycle
+						start_erase_cycle();
+						// - and now we're done with this write.
+						return;
+					} else if (data == 0x20) {
+						disable_write_protection();
+						// - and now we're done with this write.
+						return;
+					} else {
+						command_state_machine_error();
 					}
-					
-					// - Start the programming cycle
-					start_programming_cycle();
-					// - and now we're done with this write.
-					return;
+				} else {
+					if (data == 0x20) {
+						disable_write_protection();
+						// - and now we're done with this write.
+						return;
+					} else {
+						command_state_machine_error();
+					}
 				}
 			} else {
 				command_state_machine_error();
@@ -448,109 +263,6 @@ uint8_t eeprom28<
 	}
 
 	return data;
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::start_programming_cycle() {
-	change_to_state(STATE_PROGRAMMING);
-	
-	if (m_program_buffer_to_eeprom) {
-		std::copy(std::begin(m_page_buffer), std::end(m_page_buffer), &(m_storage[storage_page(m_buffering_page)]));
-	}
-
-	if (m_t_wc_usec > 0) {
-		m_programming_completed_timer->adjust(attotime::from_usec(m_t_wc_usec));
-	} else {
-		programming_cycle_complete();
-	}
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::	start_erase_cycle() {
-	if (HAS_CHIP_ERASE) {
-		change_to_state(STATE_PROGRAMMING);
-		
-		// Erase all the data by setting it to 0xff
-		std::fill_n(&m_storage[0], TOTAL_SIZE_BYTES, 0xff);
-
-		if (m_t_ce_usec > 0) {
-			m_programming_completed_timer->adjust(attotime::from_usec(TCEUsec));
-		} else {
-			programming_cycle_complete();
-		}
-	} else {
-		programming_cycle_complete();
-	}
-}
-
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::programming_cycle_complete() {
-	change_to_state(STATE_IDLE);
-
-	m_program_buffer_to_eeprom = false;
-	m_last_written_offset = -1;
-
-	// printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
 }
 
 #endif // EEPROM28_IPP

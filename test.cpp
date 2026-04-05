@@ -69,7 +69,7 @@ template<typename TestType> void complete_write(TestType &dut) {
 }
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
-	printf("%s:\n", typeid(TestType).name());
+	printf("\"%s\" (%s):\n", TestType().part().c_str(), typeid(TestType).name());
 	printf("  AddressBits = %d, DataSizeBytes = %d, PageSizeBytes = %d\n",
 		TestType::ADDRESS_BITS, TestType::DATA_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
 	printf("  T_BLC = %d usec, T_WC = %d usec%s\n",
@@ -84,6 +84,7 @@ TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
 			: "Software",
 			TestType::T_CE_USEC);
 	}
+	printf("\n");
 
 	cleanup_global_timers();
 }

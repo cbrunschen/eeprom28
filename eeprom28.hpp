@@ -111,49 +111,54 @@ template<
 class eeprom28 
 : public device_t 
 {
+	using self = eeprom28<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		HasIdPage,
+		HasHardwareChipErase,
+		HasSoftwareChipErase,
+		TCEUsec
+	>;
+
 public:
 	// construction/destruction
-	eeprom28() { }
+	eeprom28(const std::string_view &part) : m_part(part) { }
 	virtual ~eeprom28() { }
+
+	const std::string &part() { return m_part; }
 
 	void write(uint32_t offset, uint8_t data);
 	uint8_t read(uint32_t offset);
 
-		// Allow users to override device timing.
+	// Allow users to override device timing.
 	void override_t_blc_usec(uint32_t t_blc_usec) {
-		if (started())
-			fatalerror("Cannot override T_BLC on a running device");
 		m_t_blc_usec = t_blc_usec;
 	}
 
 	void override_t_wc_usec(uint32_t t_wc_usec) {
-		if (started())
-			fatalerror("Cannot override T_WC on a running device");
 		m_t_wc_usec = t_wc_usec;
 	}
 
 	void override_program_on_read(bool program_on_read) {
-		if (started())
-			fatalerror("Cannot override PROGRAM_ON_READ on a running device");
 		m_program_on_read = program_on_read;
 	}
 
-	void override_t_ce_usec(uint32_t t_ce_usec) {
-		if (started())
-			fatalerror("Cannot override T_WC on a running device");
+	void override_t_ce_usec(uint32_t t_ce_usec) requires (HasHardwareChipErase || HasSoftwareChipErase)
+	{
 		m_t_ce_usec = t_ce_usec;
 	}
 
-	void set_chip_erase(int state) {
-		if (HAS_HARDWARE_CHIP_ERASE) {
-			m_chip_erase = (state != 0);
-		}
+	void set_chip_erase(int state) requires HasHardwareChipErase
+	{
+		m_chip_erase = (state != 0);
 	}
 
-	void set_access_id_page(int state) {
-		if (HAS_ID_PAGE) {
-			m_access_id_page = (state != 0);
-		}
+	void set_access_id_page(int state) requires HasIdPage
+	{
+		m_access_id_page = (state != 0);
 	}
 
 #ifndef EEPROM28_VISIBLE_FOR_TESTING
@@ -188,8 +193,30 @@ protected:
 	static constexpr uint8_t TOGGLE_BIT = 1 << 6;
 
 	// device-level overrides
-	virtual void device_start();
-	virtual void device_reset();
+	virtual void device_start() {
+		if (m_t_blc_usec > 0 && m_start_programming_timer == nullptr) {
+			m_start_programming_timer = timer_alloc(std::bind(&self::start_programming_cycle, this));
+		}
+
+		if ((m_t_wc_usec > 0  || (HAS_CHIP_ERASE && (m_t_ce_usec > 0))) && m_programming_completed_timer == nullptr) {
+			m_programming_completed_timer = timer_alloc(std::bind(&self::programming_cycle_complete, this));
+		}
+	}
+
+	virtual void device_reset() {
+		if (m_start_programming_timer != nullptr)
+			m_start_programming_timer->enable(false);
+
+		if (m_programming_completed_timer != nullptr)
+			m_programming_completed_timer->enable(false);
+
+		change_to_state(COMMAND_STATE_NONE);
+		change_to_state(STATE_IDLE);
+
+		m_last_written_offset = -1;
+		m_write_enabled = true;
+		m_buffering_page = 0;
+	}
 
 
 #ifndef EEPROM28_VISIBLE_FOR_TESTING
@@ -197,16 +224,24 @@ protected:
 #endif // EEPROM28_VISIBLE_FOR_TESTING
 
 	// Change State to a new internal state
-	void change_to_state(int ns);
+	void change_to_state(int ns) {
+			m_state = ns;
+	}
 
 	// Error in the internal state machine, return to the correct idle internal state
-	void state_machine_error();
+	void state_machine_error() {
+		change_to_state(m_write_enabled ? STATE_BUFFERING : STATE_IDLE);
+	}
 
 	// Change State to a new command processing state
-	void change_to_command_state(int ns);
+	void change_to_command_state(int ns) {
+		m_command_state = ns;
+	}
 
 	// Error in the command state machine, return to the correct idle internal state
-	void command_state_machine_error();
+	void command_state_machine_error() {
+		change_to_command_state(COMMAND_STATE_NONE);
+	}
 
 	// internal state
 	enum {
@@ -277,6 +312,7 @@ protected:
 		//   recent address writte, /DATA Polling will not.
 	};
 
+	std::string m_part;
 	std::array<uint8_t, TOTAL_SIZE_BYTES> m_storage;
 	bool m_program_buffer_to_eeprom = false;
 	emu_timer *m_start_programming_timer = nullptr;
@@ -299,14 +335,65 @@ protected:
 	bool m_access_id_page = false;
 
 	// Timer callbacks
-	void start_programming_cycle();
-	void programming_cycle_complete();
+	void start_programming_cycle() {
+		change_to_state(STATE_PROGRAMMING);
+		
+		if (m_program_buffer_to_eeprom) {
+			std::copy(std::begin(m_page_buffer), std::end(m_page_buffer), &(m_storage[storage_page(m_buffering_page)]));
+		}
+
+		if (m_t_wc_usec > 0) {
+			m_programming_completed_timer->adjust(attotime::from_usec(m_t_wc_usec));
+		} else {
+			programming_cycle_complete();
+		}
+	}
+
+	void programming_cycle_complete() {
+		change_to_state(STATE_IDLE);
+
+		m_program_buffer_to_eeprom = false;
+		m_last_written_offset = -1;
+	}
+
+	// Helper
+	void disable_write_protection() {
+		// We have now received a complete "disable write protection" command. So we:
+		// - Enable writes.
+		m_write_enabled = true;
+		// - Note that we're no longer in a command sequence.
+		change_to_command_state(COMMAND_STATE_NONE);
+		// - Write protection was disabled, and the preceding writes were just part of that command sequence.
+		m_program_buffer_to_eeprom = false;
+		// printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
+
+		if (m_t_blc_usec > 0) {
+			// Since we're explicitly starting the programming cycle, disable the timer
+			m_start_programming_timer->enable(false);
+		}
+		
+		// - Start the programming cycle
+		start_programming_cycle();
+	}
 
 	// Chip Erase
-	void start_erase_cycle();
+	void start_erase_cycle() requires (HasHardwareChipErase || HasSoftwareChipErase) {
+		if (HAS_CHIP_ERASE) {
+			change_to_state(STATE_PROGRAMMING);
+			
+			// Erase all the data by setting it to 0xff
+			std::fill_n(&m_storage[0], TOTAL_SIZE_BYTES, 0xff);
+
+			if (m_t_ce_usec > 0) {
+				m_programming_completed_timer->adjust(attotime::from_usec(TCEUsec));
+			} else {
+				programming_cycle_complete();
+			}
+		}
+	}
 
 	// are we accessing the ID page?
-	bool is_accessing_id_page(uint32_t offset) {
+	bool is_accessing_id_page(uint32_t offset) requires HasIdPage {
 		if (HAS_ID_PAGE) {
 			return m_access_id_page && (offset & PAGE_MASK) == ID_PAGE_OFFSET;
 		} else {
@@ -314,8 +401,12 @@ protected:
 		}
 	}
 
-	uint32_t storage_offset(uint32_t offset) {
+	uint32_t storage_offset(uint32_t offset) requires HasIdPage {
 		return is_accessing_id_page(offset) ? (offset - ID_PAGE_OFFSET + DATA_SIZE_BYTES) : offset;
+	}
+
+	uint32_t storage_offset(uint32_t offset) requires (!HasIdPage) {
+		return offset;
 	}
 
 	uint32_t storage_page(uint32_t offset) {
@@ -323,25 +414,52 @@ protected:
 	}
 };
 
-class x28c64 : public eeprom28<13, 64, 100, 5000> {};
-class x28c256 : public eeprom28<15, 64, 100, 5000> {};
-class x28hc256 : public eeprom28<15, 128, 100, 3000> {};
-class x28c512 : public eeprom28<16, 128, 100, 5000> {};
-class x28c010 : public eeprom28<17, 256, 100, 5000> {};
-class xm28c020 : public eeprom28<18, 128, 100, 5000> {}; // 4 x28c512:s in a single package
-class xm28c040 : public eeprom28<19, 256, 100, 5000> {}; // 4 x28c010:s in a single package
+class x28c64 : public eeprom28<13, 64, 100, 5000> {
+public:
+	x28c64() : eeprom28<13, 64, 100, 5000>("x28c64") {}
+};
+class x28c256 : public eeprom28<15, 64, 100, 5000> {
+public:
+	x28c256() : eeprom28<15, 64, 100, 5000>("x28c256") {}
+};
+class x28hc256 : public eeprom28<15, 128, 100, 3000> {
+public:
+	x28hc256() : eeprom28<15, 128, 100, 3000>("x28hc256") {}
+};
+class x28c512 : public eeprom28<16, 128, 100, 5000> {
+public:
+	x28c512() : eeprom28<16, 128, 100, 5000>("x28c512") {}
+};
+class x28c010 : public eeprom28<17, 256, 100, 5000> {
+public:
+	x28c010() : eeprom28<17, 256, 100, 5000>("x28c010") {}
+};
+class xm28c020 : public eeprom28<18, 128, 100, 5000> {
+public:
+	xm28c020() : eeprom28<18, 128, 100, 5000>("xm28c020") {}
+}; // 4 x28c512:s in a single package
+class xm28c040 : public eeprom28<19, 256, 100, 5000> {
+public:
+	xm28c040() : eeprom28<19, 256, 100, 5000>("xm28c040") {}
+}; // 4 x28c010:s in a single package
 
 // a 256 kbit == 32 kbyte "Fast" EEPROM that uses only the Byte Load Cycle timer and
 // also programs immediately on reading; where the Write Cycle is effectively
 // infinitely quick and any pending writes are immediately committed and ready, 
 // and returned without Toggle Bit polling or /DATA polling
-class x28f256 : public eeprom28<15, 64, 100, 0, true> {};
+class x28f256 : public eeprom28<15, 64, 100, 0, true> {
+public:
+	x28f256() : eeprom28<15, 64, 100, 0, true>("x28f256") {}
+};
 
 // a 256 kbit == 32 kbyte "Immediate" EEPROM that uses no timers, requiring the client to
 // read() after performing a sequence of writes, at which point the pending writes 
 // are immediately committed and ready, and returned without Toggle Bit polling
 // or /DATA polling
-class x28i256 : public eeprom28<15, 64, 0, 0> {};
+class x28i256 : public eeprom28<15, 64, 0, 0> {
+public:
+	x28i256() : eeprom28<15, 64, 0, 0>("x28i256") {}
+};
 
 template<
 	int AddressBits, 
@@ -376,6 +494,8 @@ class at28 : public eeprom28
 	>;
 
 public:
+	at28(const std::string_view &part) : super(part) {}
+
 	void set_a9_12v(int state) {
 		super::set_access_id_page(state);
 	}
@@ -385,10 +505,22 @@ public:
 	}
 };
 
-class at28c64b : public at28<13, 64, 150, 10000> {};
-class at28hc64bf : public at28<13, 64, 150, 2000> {};
-class at28c256 : public at28<15, 64, 150, 10000> {};
-class at28c256f : public at28<15, 64, 150, 3000> {};
+class at28c64b : public at28<13, 64, 150, 10000> {
+public:
+	at28c64b() : at28<13, 64, 150, 10000>("at28c64b") {}
+};
+class at28hc64bf : public at28<13, 64, 150, 2000> {
+public:
+	at28hc64bf() : at28<13, 64, 150, 2000>("at28hc64bf") {}
+};
+class at28c256 : public at28<15, 64, 150, 10000> {
+public:
+	at28c256() : at28<15, 64, 150, 10000>("at28c256") {}
+};
+class at28c256f : public at28<15, 64, 150, 3000> {
+public:
+	at28c256f() : at28<15, 64, 150, 3000>("at28c256f") {}
+};
 
 #include "eeprom28.ipp"
 
