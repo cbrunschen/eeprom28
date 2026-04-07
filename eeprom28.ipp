@@ -82,7 +82,7 @@ void eeprom28<
 			if ((offset == (0x5555 & ADDRESS_MASK)) && (data == 0xa0)) {
 				// We've received a complete "enable write protection" command, so we:
 				// - Enable write protection, i.e., disable writes;
-				m_write_protection_enabled = true;
+				m_software_data_protection_enabled = true;
 				// - Note that we are no longer in a command sequence;
 				change_to_command_state(COMMAND_STATE_NONE);
 				// - Also enter the overall "protected write" state to potentially accept some writes.
@@ -124,7 +124,7 @@ void eeprom28<
 						// - and now we're done with this write.
 						return;
 					} else if (data == 0x20) {
-						disable_write_protection();
+						disable_software_data_protection();
 						// - and now we're done with this write.
 						return;
 					} else {
@@ -132,7 +132,7 @@ void eeprom28<
 					}
 				} else {
 					if (data == 0x20) {
-						disable_write_protection();
+						disable_software_data_protection();
 						// - and now we're done with this write.
 						return;
 					} else {
@@ -153,7 +153,7 @@ void eeprom28<
 		// If later on we detect a protection command sequence we will set this to 'false' 
 		// so that the command sequence (which will end up in the buffer)
 		// does not get written to storage.
-		m_program_buffer_to_eeprom = (!m_write_protection_enabled) || (m_state == STATE_PROTECTED_WRITE);
+		m_program_buffer_to_eeprom = (!m_software_data_protection_enabled) || (m_state == STATE_PROTECTED_WRITE);
 		// printf("m_program_buffer_to_eeprom -> %d\r\n", m_program_buffer_to_eeprom);
 
 		// We start to buffer a set of writes.
@@ -191,7 +191,7 @@ void eeprom28<
 		m_last_written_offset = offset;
 	}
 
-	// if (m_write_protection_enabled) {
+	// if (m_software_data_protection_enabled) {
 	//   printf("X28C: write %02x to %x while write protected\n", data, offset);
 	// }
 }

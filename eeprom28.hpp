@@ -214,7 +214,7 @@ protected:
 		change_to_state(STATE_IDLE);
 
 		m_last_written_offset = -1;
-		m_write_protection_enabled = false;
+		m_software_data_protection_enabled = false;
 		m_buffering_page = 0;
 	}
 
@@ -230,7 +230,7 @@ protected:
 
 	// Error in the internal state machine, return to the correct idle internal state
 	void state_machine_error() {
-		change_to_state(m_write_protection_enabled ? STATE_IDLE : STATE_BUFFERING);
+		change_to_state(m_software_data_protection_enabled ? STATE_IDLE : STATE_BUFFERING);
 	}
 
 	// Change State to a new command processing state
@@ -246,7 +246,7 @@ protected:
 	// internal state
 	enum {
 		// idle state: reads work as normal, writes will succeed or fail depending on
-		// m_write_protection_enabled - except for those writes that are part of one of the protection
+		// m_software_data_protection_enabled - except for those writes that are part of one of the protection
 		// enable or disable sequences.
 		STATE_IDLE,  
 	
@@ -285,7 +285,8 @@ protected:
 		// If in this state the client writes A0 to 5555 (1555 on X28C64),
 		// that concludes the Protection Enable command sequence and enters
 		// the Protected Write state: allowing writes to one page, at the end of which
-		// the device will enter the Write Protected state.
+		// the device will enter the Write Protected state, setting
+		// m_write_protecion_enabled = true.
 		// If instead the client writes  80 to 5555 (1555 on X28C64), this continues
 		// the Protection Disable command sequence.
 
@@ -305,8 +306,8 @@ protected:
 		// after detecting the sixth write in the protection disable command sequence:
 		// - writing 20 to address 5555 (1555 on X28C64),
 		//   the device will return to COMMAND_STATE_NONE and STATE_IDLE with
-		//   m_write_protection_enabled = false.
-		// If HasSoftwareChipErase==true, then:
+		//   m_software_data_protection_enabled = false.
+		// If HasSoftwareChipErase == true, then:
 		// - writing 10 to address 5555 (1555 on AT28C64x),
 		//   the device will perform a chip erase, filling its storage with FF. This will take TCEUsec.
 		//   While this is ongoing, Toggle Bit Polling will work, but as there was no specific most
@@ -322,7 +323,7 @@ protected:
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;
 	int m_command_state = COMMAND_STATE_NONE;
-	bool m_write_protection_enabled = false;
+	bool m_software_data_protection_enabled = false;
 	int m_buffering_page = 0;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
 
@@ -358,10 +359,10 @@ protected:
 	}
 
 	// Helper
-	void disable_write_protection() {
+	void disable_software_data_protection() {
 		// We have now received a complete "disable write protection" command. So we:
 		// - Disable write protection, i.e., enable writes.
-		m_write_protection_enabled = false;
+		m_software_data_protection_enabled = false;
 		// - Note that we're no longer in a command sequence.
 		change_to_command_state(COMMAND_STATE_NONE);
 		// - Write protection was disabled, and the preceding writes were just part of that command sequence.
