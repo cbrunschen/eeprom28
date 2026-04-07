@@ -21,8 +21,8 @@
 	REQUIRE(aval == expected);                                               \
 } while((void)0, 0)
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28f256, at28c256, at28c256f, at28c64b, at28hc64bf>;
-using atmels = std::tuple<at28c256, at28c256f, at28c64b, at28hc64bf>;
+using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28f256, at28c256, at28c256f, at28c64b, at28hc64bf, at28c64b_nvram>;
+using atmels = std::tuple<at28c256, at28c256f, at28c64b, at28hc64bf, at28c64b_nvram>;
 
 template<typename TestType> void verify_write(TestType &dut, uint32_t i, uint8_t v) {
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
@@ -120,7 +120,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 
 	const uint8_t base = 0x5e;
 	TestType dut;
-	dut.m_write_enabled = false;
+	dut.m_write_protection_enabled = true;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.start();
 	dut.read(0);
@@ -167,10 +167,10 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 	global_clock.reset(4711);
 	TestType dut;
-	dut.m_write_enabled = true; // start with writes enabled / no write protection.
+	dut.m_write_protection_enabled = false; // start with writes enabled / no write protection.
 	dut.start();
 
-	REQUIRE(dut.m_write_enabled);
+	REQUIRE(!dut.m_write_protection_enabled);
 
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
@@ -199,7 +199,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
-	REQUIRE(!dut.m_write_enabled);
+	REQUIRE(dut.m_write_protection_enabled);
 
 	cleanup_global_timers();
 }
@@ -207,10 +207,10 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 	global_clock.reset(4711);
 	TestType dut;
-	dut.m_write_enabled = false;  // start with writes disabled / write protection on.
+	dut.m_write_protection_enabled = true;  // start with writes disabled / write protection on.
 	dut.start();
 
-	REQUIRE(!dut.m_write_enabled);
+	REQUIRE(dut.m_write_protection_enabled);
 
 	dut.write((0x5555 & TestType::ADDRESS_MASK), 0xaa);
 	REQUIRE(dut.m_command_state == TestType::COMMAND_STATE_1);
@@ -257,7 +257,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
-	REQUIRE(!dut.m_write_enabled);  // we are still write protected
+	REQUIRE(dut.m_write_protection_enabled);  // we are still write protected
 
 	// And all the writes have succeeded.
 	REQUIRE(dut.m_storage[0x1231] == 0x19);
@@ -270,10 +270,10 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
 	global_clock.reset(4711);
 	TestType dut;
-	dut.m_write_enabled = false;
+	dut.m_write_protection_enabled = true;
 	dut.start();
 
-	REQUIRE(!dut.m_write_enabled);
+	REQUIRE(dut.m_write_protection_enabled);
 
 	dut.write(0x5555 & TestType::ADDRESS_MASK, 0xaa);
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
@@ -314,7 +314,7 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
 	}
 
 	REQUIRE(dut.m_state == TestType::STATE_IDLE);
-	REQUIRE(dut.m_write_enabled);
+	REQUIRE(!dut.m_write_protection_enabled);
 
 	cleanup_global_timers();
 }
@@ -422,7 +422,7 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon r
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = true;
+	dut.m_write_protection_enabled = false;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
@@ -456,7 +456,7 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold after T_BLC timer 
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = true;
+	dut.m_write_protection_enabled = false;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
@@ -493,7 +493,7 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately 
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = false;
+	dut.m_write_protection_enabled = true;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
@@ -537,7 +537,7 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold upon T_BLC t
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = false;
+	dut.m_write_protection_enabled = true;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
@@ -584,7 +584,7 @@ TEST_CASE("Immediate EEPROM, not write protected, write takes hold immediately u
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = true;
+	dut.m_write_protection_enabled = false;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
@@ -618,7 +618,7 @@ TEST_CASE("Immediate EEPROM, write protected, protected write takes hold immedia
 	TestType dut;
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
-	dut.m_write_enabled = false;
+	dut.m_write_protection_enabled = true;
 	dut.start();
 
 	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;

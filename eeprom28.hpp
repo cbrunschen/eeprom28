@@ -214,7 +214,7 @@ protected:
 		change_to_state(STATE_IDLE);
 
 		m_last_written_offset = -1;
-		m_write_enabled = true;
+		m_write_protection_enabled = false;
 		m_buffering_page = 0;
 	}
 
@@ -230,7 +230,7 @@ protected:
 
 	// Error in the internal state machine, return to the correct idle internal state
 	void state_machine_error() {
-		change_to_state(m_write_enabled ? STATE_BUFFERING : STATE_IDLE);
+		change_to_state(m_write_protection_enabled ? STATE_IDLE : STATE_BUFFERING);
 	}
 
 	// Change State to a new command processing state
@@ -246,7 +246,7 @@ protected:
 	// internal state
 	enum {
 		// idle state: reads work as normal, writes will succeed or fail depending on
-		// m_write_enabled - except for those writes that are part of one of the protection
+		// m_write_protection_enabled - except for those writes that are part of one of the protection
 		// enable or disable sequences.
 		STATE_IDLE,  
 	
@@ -304,7 +304,8 @@ protected:
 
 		// after detecting the sixth write in the protection disable command sequence:
 		// - writing 20 to address 5555 (1555 on X28C64),
-		//   the device will return to COMMAND_STATE_NONE and STATE_IDLE with m_write_enabled = true.
+		//   the device will return to COMMAND_STATE_NONE and STATE_IDLE with
+		//   m_write_protection_enabled = false.
 		// If HasSoftwareChipErase==true, then:
 		// - writing 10 to address 5555 (1555 on AT28C64x),
 		//   the device will perform a chip erase, filling its storage with FF. This will take TCEUsec.
@@ -321,7 +322,7 @@ protected:
 	uint8_t m_toggle_bit = 0;
 	int m_state = STATE_IDLE;
 	int m_command_state = COMMAND_STATE_NONE;
-	bool m_write_enabled = true;
+	bool m_write_protection_enabled = false;
 	int m_buffering_page = 0;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
 
@@ -359,8 +360,8 @@ protected:
 	// Helper
 	void disable_write_protection() {
 		// We have now received a complete "disable write protection" command. So we:
-		// - Enable writes.
-		m_write_enabled = true;
+		// - Disable write protection, i.e., enable writes.
+		m_write_protection_enabled = false;
 		// - Note that we're no longer in a command sequence.
 		change_to_command_state(COMMAND_STATE_NONE);
 		// - Write protection was disabled, and the preceding writes were just part of that command sequence.
@@ -414,34 +415,24 @@ protected:
 	}
 };
 
-class x28c64 : public eeprom28<13, 64, 100, 5000> {
-public:
-	x28c64() : eeprom28<13, 64, 100, 5000>("x28c64") {}
+#define X28_DEF(n, ab, pb, tb, tw)          \
+class n : public eeprom28<ab, pb, tb, tw> { \
+public:                                     \
+	n() : eeprom28<ab, pb, tb, tw>(#n) {}     \
 };
-class x28c256 : public eeprom28<15, 64, 100, 5000> {
-public:
-	x28c256() : eeprom28<15, 64, 100, 5000>("x28c256") {}
-};
-class x28hc256 : public eeprom28<15, 128, 100, 3000> {
-public:
-	x28hc256() : eeprom28<15, 128, 100, 3000>("x28hc256") {}
-};
-class x28c512 : public eeprom28<16, 128, 100, 5000> {
-public:
-	x28c512() : eeprom28<16, 128, 100, 5000>("x28c512") {}
-};
-class x28c010 : public eeprom28<17, 256, 100, 5000> {
-public:
-	x28c010() : eeprom28<17, 256, 100, 5000>("x28c010") {}
-};
-class xm28c020 : public eeprom28<18, 128, 100, 5000> {
-public:
-	xm28c020() : eeprom28<18, 128, 100, 5000>("xm28c020") {}
-}; // 4 x28c512:s in a single package
-class xm28c040 : public eeprom28<19, 256, 100, 5000> {
-public:
-	xm28c040() : eeprom28<19, 256, 100, 5000>("xm28c040") {}
-}; // 4 x28c010:s in a single package
+
+X28_DEF(x28c64, 13, 64, 100, 5000)
+X28_DEF(x28c256, 15, 64, 100, 500)
+X28_DEF(x28hc256, 15, 128, 100, 3000)
+X28_DEF(x28c512, 16, 128, 100, 5000)
+X28_DEF(x28c010, 17, 256, 100, 5000)
+X28_DEF(xm28c020, 18, 128, 100, 5000) // 4 x28c512:s in a single package
+X28_DEF(xm28c040, 19, 256, 100, 5000) // 4 x28c010:s in a single package
+// a 256 kbit == 32 kbyte "Immediate" EEPROM that uses no timers, requiring the client to
+// read() after performing a sequence of writes, at which point the pending writes 
+// are immediately committed and ready, and returned without Toggle Bit polling
+// or /DATA polling
+X28_DEF(x28i256, 15, 64, 0, 0)
 
 // a 256 kbit == 32 kbyte "Fast" EEPROM that uses only the Byte Load Cycle timer and
 // also programs immediately on reading; where the Write Cycle is effectively
@@ -452,15 +443,25 @@ public:
 	x28f256() : eeprom28<15, 64, 100, 0, true>("x28f256") {}
 };
 
-// a 256 kbit == 32 kbyte "Immediate" EEPROM that uses no timers, requiring the client to
-// read() after performing a sequence of writes, at which point the pending writes 
-// are immediately committed and ready, and returned without Toggle Bit polling
-// or /DATA polling
-class x28i256 : public eeprom28<15, 64, 0, 0> {
-public:
-	x28i256() : eeprom28<15, 64, 0, 0>("x28i256") {}
-};
+#undef X28_DEF
 
+
+template <typename B>
+class at28_pins {
+public:
+	void set_a9_12v(int state) {
+		B::set_access_id_page(state);
+	}
+
+	void set_oe_12v(int state) {
+		B::set_chip_erase(state);
+	}
+};
+#undef AT28_SUPER_PARAMS
+#undef AT28_PARAMS
+
+#define AT28_SUPER_PARAMS AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead, true, true, true, TCEUsec
+#define AT28_PARAMS AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead, TCEUsec
 template<
 	int AddressBits, 
 	uint32_t PageSizeBytes, 
@@ -469,18 +470,69 @@ template<
 	bool ProgramOnRead = false,
 	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
 >
-class at28 : public eeprom28
-<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	true, // HasIdPage
-	true, // HasHardwareChipErase
-	true, // HasSoftwareChipErase
-	TCEUsec
-> {
+class at28
+: public eeprom28<AT28_SUPER_PARAMS>
+, public at28_pins<at28<AT28_PARAMS>>
+{
+	using super = eeprom28<AT28_SUPER_PARAMS>;
+	using self = at28<AT28_PARAMS>;
+
+public:	
+	at28(const std::string_view &part) : super(part) {}
+};
+
+#define AT28_DEF(n, ab, pb, tb, tw)   \
+class n : public at28<ab, pb, tb, tw> \
+{                                     \
+	using super = at28<ab, pb, tb, tw>; \
+public:                               \
+  n() : super(#n) {}                  \
+};
+
+AT28_DEF(at28c64b, 13, 64, 150, 10000)
+AT28_DEF(at28hc64bf, 13, 64, 150, 2000)
+AT28_DEF(at28c256, 15, 64, 150, 10000)
+AT28_DEF(at28c256f, 15, 64, 150, 3000)
+
+#undef AT28_DEF
+
+
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead = false,
+	bool HasIdPage = false,
+	bool HasHardwareChipErase = false,
+	bool HasSoftwareChipErase = false,
+	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
+>
+class eeprom28_nvram
+: public eeprom28<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		HasIdPage,
+		HasHardwareChipErase,
+		HasSoftwareChipErase,
+		TCEUsec
+	>
+, public device_nvram_interface
+{
+	using self = eeprom28_nvram<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		HasIdPage,
+		HasHardwareChipErase,
+		HasSoftwareChipErase,
+		TCEUsec
+	>;
 	using super = eeprom28<
 		AddressBits,
 		PageSizeBytes,
@@ -494,33 +546,84 @@ class at28 : public eeprom28
 	>;
 
 public:
-	at28(const std::string_view &part) : super(part) {}
+	eeprom28_nvram(const std::string_view &part) : super(part) {}
 
-	void set_a9_12v(int state) {
-		super::set_access_id_page(state);
+protected:
+	// derived class overrides
+	void nvram_default() override
+	{
+		printf("Defaulting NVRAM for %s\n", self::m_part.c_str());
 	}
 
-	void set_oe_12v(int state) {
-		super::set_chip_erase(state);
+	bool nvram_read(std::istream &file) override
+	{
+		printf("Reading NVRAM for %s\n", self::m_part.c_str());
+		return true;
+	}
+
+	bool nvram_write(std::ostream &file) override
+	{
+		printf("Writing NVRAM for %s\n", self::m_part.c_str());
+		return true;
 	}
 };
 
-class at28c64b : public at28<13, 64, 150, 10000> {
+template<
+	int AddressBits, 
+	uint32_t PageSizeBytes, 
+	uint32_t TBLCUsec, 
+	uint32_t TWCUsec,
+	bool ProgramOnRead = false,
+	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
+>
+class at28_nvram
+: public eeprom28_nvram<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		true, // HasIdPage
+		true, // HasHardwareChipErase
+		true, // HasSoftwareChipErase
+		TCEUsec
+	>
+, public at28_pins<
+		at28_nvram<
+			AddressBits,
+			PageSizeBytes,
+			TBLCUsec,
+			TWCUsec,
+			ProgramOnRead, 
+			TCEUsec
+		>
+	>
+{
+	using super = eeprom28_nvram<
+		AddressBits,
+		PageSizeBytes,
+		TBLCUsec,
+		TWCUsec,
+		ProgramOnRead,
+		true, // HasIdPage
+		true, // HasHardwareChipErase
+		true, // HasSoftwareChipErase
+		TCEUsec
+	>;
+
 public:
-	at28c64b() : at28<13, 64, 150, 10000>("at28c64b") {}
+	at28_nvram(const std::string_view &part) : super(part) {}
 };
-class at28hc64bf : public at28<13, 64, 150, 2000> {
-public:
-	at28hc64bf() : at28<13, 64, 150, 2000>("at28hc64bf") {}
+
+#define DEFINE_AT28_NVRAM(n, ab, pb, tb, tw)         \
+class n : public at28_nvram<ab, pb, tb, tw>          \
+{                                                    \
+	using super = at28_nvram<ab, pb, tb, tw>;          \
+public:                                              \
+  n() : super(#n) {}                                 \
 };
-class at28c256 : public at28<15, 64, 150, 10000> {
-public:
-	at28c256() : at28<15, 64, 150, 10000>("at28c256") {}
-};
-class at28c256f : public at28<15, 64, 150, 3000> {
-public:
-	at28c256f() : at28<15, 64, 150, 3000>("at28c256f") {}
-};
+
+DEFINE_AT28_NVRAM(at28c64b_nvram, 13, 64, 150, 10000)
 
 #include "eeprom28.ipp"
 

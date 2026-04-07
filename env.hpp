@@ -117,4 +117,12 @@ public:
 	bool m_started = false;
 };
 
+class device_nvram_interface {
+protected:
+	// derived class overrides
+	virtual void nvram_default() = 0;
+	virtual bool nvram_read(std::istream &file) = 0;
+	virtual bool nvram_write(std::ostream &file) = 0;
+};
+
 #endif // ENV_HPP
