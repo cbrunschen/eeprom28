@@ -3,10 +3,13 @@
 #include <catch2/generators/catch_generators_all.hpp>
 
 #define EEPROM28_VISIBLE_FOR_TESTING 1
-#include "eeprom28.hpp"
+
+#include "x28.h"
+#include "at28.h"
+
 #undef EEPROM28_VISIBLE_FOR_TESTING
 
-#include "env.hpp"
+#include "env.h"
 
 #include <tuple>
 #include <cstring>
@@ -21,8 +24,29 @@
 	REQUIRE(aval == expected);                                               \
 } while((void)0, 0)
 
-using types = std::tuple<x28c64, x28c256, x28hc256, x28c512, x28c010, xm28c020, xm28c040, x28i256, x28f256, at28c256, at28c256f, at28c64b, at28hc64bf, at28c64b_nvram>;
-using atmels = std::tuple<at28c256, at28c256f, at28c64b, at28hc64bf, at28c64b_nvram>;
+using types = std::tuple
+< x28c64_device
+, x28c256_device
+, x28hc256_device
+, x28c512_device
+, x28c010_device
+, xm28c020_device
+, xm28c040_device
+, x28i256_device
+, x28f256_device
+, at28c256_device
+, at28c256f_device
+, at28c64b_device
+, at28hc64bf_device
+, at28c64b_nvram_device
+>;
+using atmels = std::tuple
+< at28c256_device
+, at28c256f_device
+, at28c64b_device
+, at28hc64bf_device
+, at28c64b_nvram_device
+>;
 
 template<typename TestType> void verify_write(TestType &dut, uint32_t i, uint8_t v) {
 	REQUIRE(dut.m_state == TestType::STATE_BUFFERING);
@@ -69,7 +93,7 @@ template<typename TestType> void complete_write(TestType &dut) {
 }
 
 TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
-	printf("\"%s\" (%s):\n", TestType().part().c_str(), typeid(TestType).name());
+	printf("\"%s\" (%s):\n", TestType("dut").part().c_str(), typeid(TestType).name());
 	printf("  AddressBits = %d, DataSizeBytes = %d, PageSizeBytes = %d\n",
 		TestType::ADDRESS_BITS, TestType::DATA_SIZE_BYTES, TestType::PAGE_SIZE_BYTES);
 	printf("  T_BLC = %d usec, T_WC = %d usec%s\n",
@@ -91,7 +115,7 @@ TEMPLATE_LIST_TEST_CASE("Show Device Info", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Write one byte without protection", "", types) {
 	global_clock.reset(4711L);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.start();
@@ -119,7 +143,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 	global_clock.reset(4711L);
 
 	const uint8_t base = 0x5e;
-	TestType dut;
+	TestType dut("dut");
 	dut.m_software_data_protection_enabled = true;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.start();
@@ -166,7 +190,7 @@ TEMPLATE_LIST_TEST_CASE("Write protection rejects writes", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	dut.m_software_data_protection_enabled = false; // start with writes enabled / no write protection.
 	dut.start();
 
@@ -206,7 +230,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection takes hold", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	dut.m_software_data_protection_enabled = true;  // start with writes disabled / write protection on.
 	dut.start();
 
@@ -269,7 +293,7 @@ TEMPLATE_LIST_TEST_CASE("Write Protection Sequence allows writing", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	dut.m_software_data_protection_enabled = true;
 	dut.start();
 
@@ -321,7 +345,7 @@ TEMPLATE_LIST_TEST_CASE("Write Un-Protection takes hold", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0xbd;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 
@@ -357,7 +381,7 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 
 TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first mentioned page", "", types) {
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0xbd;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 
@@ -416,10 +440,10 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes across pages only affect the first ment
 }
 
 TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon read", "") {
-	using TestType = x28f256;
+	using TestType = x28f256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = false;
@@ -450,10 +474,10 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold immediately upon r
 }
 
 TEST_CASE("Fast EEPROM, not write protected, write takes hold after T_BLC timer expipred", "") {
-	using TestType = x28f256;
+	using TestType = x28f256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = false;
@@ -487,10 +511,10 @@ TEST_CASE("Fast EEPROM, not write protected, write takes hold after T_BLC timer 
 }
 
 TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately upon read", "") {
-	using TestType = x28f256;
+	using TestType = x28f256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = true;
@@ -531,10 +555,10 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold immediately 
 }
 
 TEST_CASE("Fast EEPROM, write protected, protected write takes hold upon T_BLC timer expiry", "") {
-	using TestType = x28f256;
+	using TestType = x28f256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = true;
@@ -578,10 +602,10 @@ TEST_CASE("Fast EEPROM, write protected, protected write takes hold upon T_BLC t
 }
 
 TEST_CASE("Immediate EEPROM, not write protected, write takes hold immediately upon read", "") {
-	using TestType = x28i256;
+	using TestType = x28i256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = false;
@@ -612,10 +636,10 @@ TEST_CASE("Immediate EEPROM, not write protected, write takes hold immediately u
 }
 
 TEST_CASE("Immediate EEPROM, write protected, protected write takes hold immediately upon read", "") {
-	using TestType = x28i256;
+	using TestType = x28i256_device;
 
 	global_clock.reset(4711);
-	TestType dut;
+	TestType dut("dut");
 	uint8_t base = 0xd9;
 	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
 	dut.m_software_data_protection_enabled = true;
@@ -666,7 +690,7 @@ TEMPLATE_LIST_TEST_CASE("Total Size = Data Size + (1 page for ID iff this type h
 TEMPLATE_LIST_TEST_CASE("Write to both data and ID page", "", atmels) {
 
 	global_clock.reset(4711L);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
 
@@ -713,7 +737,7 @@ TEMPLATE_LIST_TEST_CASE("Write to both data and ID page", "", atmels) {
 
 TEMPLATE_LIST_TEST_CASE("Read from both data and ID page", "", atmels) {
 	global_clock.reset(4711L);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
 
@@ -751,7 +775,7 @@ TEMPLATE_LIST_TEST_CASE("Read from both data and ID page", "", atmels) {
 
 TEMPLATE_LIST_TEST_CASE("Software Chip Erase", "", atmels) {
 	global_clock.reset(4711L);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
 
@@ -808,7 +832,7 @@ TEMPLATE_LIST_TEST_CASE("Software Chip Erase", "", atmels) {
 
 TEMPLATE_LIST_TEST_CASE("Hardware Chip Erase", "", atmels) {
 	global_clock.reset(4711L);
-	TestType dut;
+	TestType dut("dut");
 	const uint8_t base = 0x3a;
 	std::memset(&dut.m_storage[0], base, TestType::TOTAL_SIZE_BYTES);
 

@@ -101,8 +101,12 @@ inline void Clock::reset(uint64_t now) {
  
 class device_t {
 public:
+	device_t(const std::string_view &tag) : m_tag(tag) { }
+
 	void start() { device_start(); m_started = true; }
 	void reset() { device_reset(); m_started = false; }
+
+	const std::string &tag() { return m_tag; }
 
 	virtual void device_start() = 0;
 	virtual void device_reset() = 0;
@@ -114,6 +118,7 @@ public:
 
 	bool started() { return m_started; }
 
+	std::string m_tag;
 	bool m_started = false;
 };
 

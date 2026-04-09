@@ -9,7 +9,7 @@
 #ifndef EEPROM28_IPP
 #define EEPROM28_IPP
 
-#include "eeprom28.hpp"
+#include "eeprom28.h"
 
 #pragma once
 
@@ -24,7 +24,7 @@ template<
 	bool HasSoftwareChipErase,
 	uint32_t TCEUsec
 >
-void eeprom28<
+void eeprom28_device<
 	AddressBits,
 	PageSizeBytes,
 	TBLCUsec,
@@ -207,7 +207,7 @@ template<
 	bool HasSoftwareChipErase,
 	uint32_t TCEUsec
 >
-uint8_t eeprom28<
+uint8_t eeprom28_device<
 	AddressBits,
 	PageSizeBytes,
 	TBLCUsec,
