@@ -19,12 +19,16 @@
 #include <array>
 #include <cstdint>
 #include <cstdio>
+#include <iostream>
 
 //**************************************************************************
 //  TYPE DEFINITIONS
 //**************************************************************************
 
 // eeprom28_device: 28-series EEPROM with paged write and software write protection
+
+#define EEPROM28_PARAMS int AddressBits, uint32_t PageSizeBytes, uint32_t TBLCUsec, uint32_t TWCUsec, bool ProgramOnRead, bool HasIdPage, bool HasHardwareChipErase, bool HasSoftwareChipErase, uint32_t TCEUsec
+#define EEPROM28_ARGS AddressBits, PageSizeBytes, TBLCUsec, TWCUsec, ProgramOnRead, HasIdPage, HasHardwareChipErase, HasSoftwareChipErase, TCEUsec
 
 /**
  * Template parameters
@@ -111,17 +115,7 @@ template<
 class eeprom28_device 
 : public device_t 
 {
-	using self = eeprom28_device<
-		AddressBits,
-		PageSizeBytes,
-		TBLCUsec,
-		TWCUsec,
-		ProgramOnRead,
-		HasIdPage,
-		HasHardwareChipErase,
-		HasSoftwareChipErase,
-		TCEUsec
-	>;
+	using self = eeprom28_device<EEPROM28_ARGS>;
 
 public:
 	// construction/destruction
@@ -230,7 +224,9 @@ protected:
 
 	// Error in the internal state machine, return to the correct idle internal state
 	void state_machine_error() {
+		fprintf(stdout, "%s: state machine error: changing from state %d", m_part.c_str(), m_state);
 		change_to_state(m_software_data_protection_enabled ? STATE_IDLE : STATE_BUFFERING);
+		fprintf(stdout, "% to state %d", m_state);
 	}
 
 	// Change State to a new command processing state
@@ -261,7 +257,7 @@ protected:
 		// As long as the next write is to the same page (higher address bits remain
 		// the same) and the next write is initiated within T_BLC, more bytes can be
 		// written, and those too will be written to the internal buffer. 
-		// If no more writes happen within T_BLC, thw programming cycle starts,
+		// If no more writes happen within T_BLC, the programming cycle starts,
 		// during which time the buffer will be saved to the corresponding page in
 		// the persistent EEPROM storage.
 		STATE_BUFFERING,
@@ -428,65 +424,60 @@ template<
 	uint32_t TCEUsec = 20'000   // 20 ms chip erase time by default
 >
 class eeprom28_nvram_device
-: public eeprom28_device<
-		AddressBits,
-		PageSizeBytes,
-		TBLCUsec,
-		TWCUsec,
-		ProgramOnRead,
-		HasIdPage,
-		HasHardwareChipErase,
-		HasSoftwareChipErase,
-		TCEUsec
-	>
+: public eeprom28_device<EEPROM28_ARGS>
 , public device_nvram_interface
 {
-	using self = eeprom28_nvram_device<
-		AddressBits,
-		PageSizeBytes,
-		TBLCUsec,
-		TWCUsec,
-		ProgramOnRead,
-		HasIdPage,
-		HasHardwareChipErase,
-		HasSoftwareChipErase,
-		TCEUsec
-	>;
-	using super = eeprom28_device<
-		AddressBits,
-		PageSizeBytes,
-		TBLCUsec,
-		TWCUsec,
-		ProgramOnRead,
-		true, // HasIdPage
-		true, // HasHardwareChipErase
-		true, // HasSoftwareChipErase
-		TCEUsec
-	>;
+	using self = eeprom28_nvram_device<EEPROM28_ARGS>;
+	using super = eeprom28_device<EEPROM28_ARGS>;
 
 public:
 	eeprom28_nvram_device(const std::string_view &part, const std::string_view &tag) : super(part, tag) {}
 
-protected:
 	// derived class overrides
 	void nvram_default() override
 	{
-		printf("Defaulting NVRAM for %s\n", self::m_part.c_str());
+		std::memset(&self::m_storage[0], 0xff, self::TOTAL_SIZE_BYTES);
 	}
 
-	bool nvram_read(std::istream &file) override
+	bool nvram_read(std::basic_istream<uint8_t> &file) override
 	{
-		printf("Reading NVRAM for %s\n", self::m_part.c_str());
+		auto constexpr N = self::TOTAL_SIZE_BYTES + 1;
+		std::array<uint8_t, N> buffer;
+		size_t offset = 0;
+		size_t nread = 0;
+
+		assert(!file.badbit);
+
+		while (offset < N && (nread = file.readsome(&buffer[offset], N - offset)) > 0) {
+			offset += nread;
+		}
+
+		if (offset < N) {
+			// std::cout << this->part() << " read only " << offset << " out of " << N << " expected bytes" << std::endl;
+			return false;
+		} else if (file.peek() != std::char_traits<uint8_t>::eof()) {
+			// std::cout << this->part() << " read all " << offset << " expected bytes, but not at end of input" << std::endl;
+			return false;
+		}
+
+		std::memcpy(&self::m_storage[0], &buffer[0], self::TOTAL_SIZE_BYTES);
+		self::m_software_data_protection_enabled = buffer[self::TOTAL_SIZE_BYTES] != 0;
 		return true;
 	}
 
-	bool nvram_write(std::ostream &file) override
+	bool nvram_write(std::basic_ostream<uint8_t> &file) override
 	{
-		printf("Writing NVRAM for %s\n", self::m_part.c_str());
+		std::array<uint8_t, self::TOTAL_SIZE_BYTES + 1> buffer;
+		std::memcpy(&buffer[0], &self::m_storage[0], self::TOTAL_SIZE_BYTES);
+		buffer[self::TOTAL_SIZE_BYTES] = self::m_software_data_protection_enabled ? 1 : 0;
+		file.write(&buffer[0], self::TOTAL_SIZE_BYTES + 1);
 		return true;
 	}
 };
 
 #include "eeprom28.ipp"
+
+#undef EEPROM28_PARAMS
+#undef EEPROM28_ARGS
 
 #endif // EEPROM28_HPP

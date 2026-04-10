@@ -13,28 +13,8 @@
 
 #pragma once
 
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-void eeprom28_device<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::write(uint32_t offset, uint8_t data) {
+template<EEPROM28_PARAMS>
+void eeprom28_device<EEPROM28_ARGS>::write(uint32_t offset, uint8_t data) {
 	if (m_state == STATE_PROGRAMMING) {
 		// An attempt to write during a programming cycle does nothing.
 		printf("IN PROGRAMMING CYCLE: writing %02x @ %04x\n", data, offset);
@@ -196,28 +176,8 @@ void eeprom28_device<
 	// }
 }
 
-template<
-	int AddressBits, 
-	uint32_t PageSizeBytes, 
-	uint32_t TBLCUsec, 
-	uint32_t TWCUsec,
-	bool ProgramOnRead,
-	bool HasIdPage,
-	bool HasHardwareChipErase,
-	bool HasSoftwareChipErase,
-	uint32_t TCEUsec
->
-uint8_t eeprom28_device<
-	AddressBits,
-	PageSizeBytes,
-	TBLCUsec,
-	TWCUsec,
-	ProgramOnRead,
-	HasIdPage,
-	HasHardwareChipErase,
-	HasSoftwareChipErase,
-	TCEUsec
->::read(uint32_t offset) {
+template<EEPROM28_PARAMS>
+uint8_t eeprom28_device<EEPROM28_ARGS>::read(uint32_t offset) {
 	if (!started()) fatalerror("read(): device must be started!");
 
 	if (m_command_state != COMMAND_STATE_NONE) {
@@ -228,7 +188,7 @@ uint8_t eeprom28_device<
 		change_to_state(STATE_BUFFERING);
 	}
 
-	if (PROGRAM_ON_READ) {
+	if (m_program_on_read) {
 		if (m_state == STATE_BUFFERING || m_state == STATE_PROTECTED_WRITE) {
 			// We have some buffered data or a change to enable write protection;
 			// immediately write any buffered data to storage:
