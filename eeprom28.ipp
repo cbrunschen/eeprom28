@@ -144,8 +144,7 @@ void eeprom28_device<EEPROM28_ARGS>::write(uint32_t offset, uint8_t data) {
 		// so the buffer can be written into on a byte by byte basis, before being written back
 		// to storage during the programming cycle.
 		m_buffering_page = offset & PAGE_MASK;
-		const uint8_t *p = &(m_storage[storage_page(m_buffering_page)]);
-		std::copy(p, p + PageSizeBytes, std::begin(m_page_buffer));
+		std::memcpy(&m_page_buffer[0], &m_storage[storage_page(m_buffering_page)], PAGE_SIZE_BYTES);
 	}
 
 	// Deliberately falling through after detecting the first write and changing state
@@ -202,7 +201,10 @@ uint8_t eeprom28_device<EEPROM28_ARGS>::read(uint32_t offset) {
 		}
 	}
 
-	uint8_t data = m_storage[storage_offset(offset)];
+		// If we're currently buffering a page, then reads from the page in question
+	// should be sourced from the page buffer.
+	bool read_from_buffer = m_buffering_page >= 0 && (offset & PAGE_MASK) == m_buffering_page;
+	uint8_t data = read_from_buffer ? m_page_buffer[offset & PAGE_OFFSET_MASK] : m_storage[storage_offset(offset)];
 
 	if (m_program_buffer_to_eeprom || (m_state == STATE_PROGRAMMING)) {
 		// "/DATA Polling"

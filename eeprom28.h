@@ -209,7 +209,7 @@ protected:
 
 		m_last_written_offset = -1;
 		m_software_data_protection_enabled = false;
-		m_buffering_page = 0;
+		m_buffering_page = -1;
 	}
 
 
@@ -320,7 +320,7 @@ protected:
 	int m_state = STATE_IDLE;
 	int m_command_state = COMMAND_STATE_NONE;
 	bool m_software_data_protection_enabled = false;
-	int m_buffering_page = 0;
+	int32_t m_buffering_page = -1;
 	std::array<uint8_t, PageSizeBytes> m_page_buffer;
 
 		// Configurable overrides: initialize per the device's definition.
@@ -337,8 +337,10 @@ protected:
 		change_to_state(STATE_PROGRAMMING);
 		
 		if (m_program_buffer_to_eeprom) {
-			std::copy(std::begin(m_page_buffer), std::end(m_page_buffer), &(m_storage[storage_page(m_buffering_page)]));
+			std::memcpy(&m_storage[storage_page(m_buffering_page)], &m_page_buffer[0], PAGE_SIZE_BYTES);
 		}
+
+		m_buffering_page = -1;
 
 		if (m_t_wc_usec > 0) {
 			m_programming_completed_timer->adjust(attotime::from_usec(m_t_wc_usec));

@@ -54,6 +54,7 @@ using types = tt
 , xm28c040_nvram_device
 , x28i256_nvram_device
 , x28f256_nvram_device
+, x28sf256_nvram_device
 , at28c256_nvram_device
 , at28c256f_nvram_device
 , at28c64b_nvram_device
@@ -82,6 +83,7 @@ using nvrams = tt
 , xm28c040_nvram_device
 , x28i256_nvram_device
 , x28f256_nvram_device
+, x28sf256_nvram_device
 , at28c256_nvram_device
 , at28c256f_nvram_device
 , at28c64b_nvram_device
@@ -395,6 +397,45 @@ TEMPLATE_LIST_TEST_CASE("Multiple writes to the same page work", "", types) {
 		global_clock.advance(TestType::T_BLC_USEC / 2);
 		// We should still be in the buffering state
 		REQUIRE_T(dut.m_state == TestType::STATE_BUFFERING);
+
+		// also update our expected view of memory
+		expected[address] = v;
+	}
+
+	complete_write(dut);
+
+	// Check that the contents match: i.e., only the written-to addresses have changed - but indeed, all of them have.
+	REQUIRE_T(std::memcmp(&dut.m_storage[0], &expected[0], TestType::DATA_SIZE_BYTES) == 0);
+
+	cleanup_global_timers();
+}
+
+TEMPLATE_LIST_TEST_CASE("Reading while writing reads back just-written data", "", types) {
+	global_clock.reset(4711);
+	TestType dut("dut");
+	const uint8_t base = 0xbd;
+	std::memset(&dut.m_storage[0], base, TestType::DATA_SIZE_BYTES);
+
+	// Also keep our expected view of what's in the EEPROM:
+	std::array<uint8_t, TestType::DATA_SIZE_BYTES> expected;
+	// Filled with the base value, initially.
+	std::memset(&expected[0], base, TestType::DATA_SIZE_BYTES);
+
+	dut.start();
+
+	auto page = GENERATE(take(5, random((int)0, (int)(TestType::DATA_SIZE_BYTES / TestType::PAGE_SIZE_BYTES)-1)));
+	auto n_bytes = 7 + (rand() % (TestType::PAGE_SIZE_BYTES - 7));
+	for (int i = 0; i < n_bytes; i++) {
+		auto address = page * TestType::PAGE_SIZE_BYTES + (rand() & TestType::PAGE_OFFSET_MASK);
+		uint8_t v = rand() & 0xff;
+		dut.write(address, v);
+		// advance by less than T_BLC
+		global_clock.advance(TestType::T_BLC_USEC / 2);
+		// We should still be in the buffering state
+		REQUIRE_T(dut.m_state == TestType::STATE_BUFFERING);
+
+		// Reading the data back shoudl be correct (module the /DATA bit and Toggle bit things)
+		REQUIRE((dut.read(address) & 0x3f) == (v & 0x3f));
 
 		// also update our expected view of memory
 		expected[address] = v;
